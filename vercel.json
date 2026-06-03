@@ -10,7 +10,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "memory": 3008,
+      "memory": 2048,
       "excludeFiles": "{tests/**,.venv/**,scripts/**,storage/**,**/__pycache__/**}"
     }
   }
