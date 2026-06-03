@@ -1,29 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "version": 2,
-  "builds": [
+  "installCommand": "pip install -r requirements.txt",
+  "rewrites": [
     {
-      "src": "api/index.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "api/index.py"
+      "source": "/(.*)",
+      "destination": "/api/index"
     }
   ],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "memory": 3008
+      "memory": 3008,
+      "excludeFiles": "{tests/**,.venv/**,scripts/**,storage/**,**/__pycache__/**}"
     }
-  },
-  "installCommand": "pip install -r requirements.txt",
-  "env": {
-    "PYTHON_VERSION": "3.11"
   }
 }
