@@ -7,13 +7,13 @@ import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from app.config import Settings, get_settings
-from app.models.responses import AnalyzeResponse, HealthResponse, PanoramaResponse
+from app.models.responses import AnalyzeResponse, HealthResponse
 from app.services.analyzer import AssetAnalysisService
 from app.services.gemini import GeminiService
-from app.services.metrics import REQUEST_COUNT, REQUEST_LATENCY, STITCH_METHOD
+from app.services.metrics import ANALYSIS_METHOD, REQUEST_COUNT, REQUEST_LATENCY
 from app.services.rate_limiter import RateLimiter
 from app.utils.timing import timer
-from app.utils.uploads import MULTI_IMAGE_OPENAPI, parse_angle_labels, parse_uploaded_images
+from app.utils.uploads import SINGLE_IMAGE_OPENAPI, resolve_image_input
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -46,180 +46,42 @@ async def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
 
 
 @router.post(
-    "/assets/panorama",
-    response_model=PanoramaResponse,
-    tags=["Panorama"],
-    summary="Create unified panorama from multiple images",
-    description=(
-        "Upload 2–10 images and receive a single unified composite (stitched panorama, "
-        "labeled grid, or hybrid). Use this endpoint to preview how images are combined "
-        "before running full Gemini analysis."
-    ),
-    openapi_extra={
-        **MULTI_IMAGE_OPENAPI,
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["images"],
-                        "properties": {
-                            **MULTI_IMAGE_OPENAPI["requestBody"]["content"][
-                                "multipart/form-data"
-                            ]["schema"]["properties"],
-                            "include_image_base64": {
-                                "type": "boolean",
-                                "default": True,
-                                "description": "Include base64 JPEG in response for inline preview",
-                            },
-                        },
-                    }
-                }
-            }
-        },
-    },
-)
-async def create_panorama(
-    images: Annotated[
-        list[UploadFile],
-        File(
-            description=(
-                "Asset photos (2–10). In Swagger: click **Add item** and choose one file per row."
-            ),
-        ),
-    ],
-    angles: Annotated[
-        str | None,
-        Form(description="Comma-separated angle labels, e.g. Front,Back,Left,Right"),
-    ] = None,
-    include_image_base64: Annotated[
-        bool,
-        Form(description="Return base64 image in JSON for Swagger preview"),
-    ] = True,
-    layout: Annotated[
-        str | None,
-        Form(
-            description=(
-                "Composite layout: collage (default), stitch, or grid. "
-                "Analyze always uses collage+TAG ZOOM; panorama preview only here."
-            ),
-        ),
-    ] = None,
-    settings: Settings = Depends(get_settings),
-    rate_limiter: RateLimiter = Depends(get_rate_limiter),
-    analyzer: AssetAnalysisService = Depends(get_analyzer),
-) -> PanoramaResponse:
-    rate_limiter.check("poc")
-    parsed_files = await parse_uploaded_images(images, settings)
-    angle_list = parse_angle_labels(angles)
-
-    with timer() as elapsed:
-        try:
-            result = await analyzer.create_panorama(
-                files=parsed_files,
-                angles=angle_list,
-                include_image_base64=include_image_base64,
-                layout=layout,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-            ) from exc
-
-    STITCH_METHOD.labels(method=result.unified_view.method.value).inc()
-    REQUEST_LATENCY.observe(elapsed[0] / 1000)
-    return result
-
-
-@router.post(
     "/assets/analyze",
     response_model=AnalyzeResponse,
     tags=["Analysis"],
-    summary="Analyze asset from multiple images (Gemini)",
+    summary="Analyze asset from one image (Gemini)",
     description=(
-        "Upload 2–10 images. All photos are combined into one high-resolution analysis "
-        "contact sheet (labeled grid + tag zoom row) before a single Gemini call extracts "
-        "asset name, condition, description, tag number, and optional name validation."
+        "Send one photo as a file upload (`image`) or as base64 (`image_base64`, "
+        "including data URLs). The image is preprocessed and sent to Gemini for "
+        "asset identification, condition, description, and tag/barcode."
     ),
-    openapi_extra={
-        **MULTI_IMAGE_OPENAPI,
-        "requestBody": {
-            "content": {
-                "multipart/form-data": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["images"],
-                        "properties": {
-                            **MULTI_IMAGE_OPENAPI["requestBody"]["content"][
-                                "multipart/form-data"
-                            ]["schema"]["properties"],
-                            "locale": {
-                                "type": "string",
-                                "default": "en",
-                                "description": "Output language for Gemini response",
-                            },
-                            "tag_image_index": {
-                                "type": "integer",
-                                "description": (
-                                    "0-based index of the image that best shows the asset tag/barcode"
-                                ),
-                            },
-                        },
-                    }
-                }
-            }
-        },
-    },
+    openapi_extra=SINGLE_IMAGE_OPENAPI,
 )
 async def analyze_assets(
-    images: Annotated[
-        list[UploadFile],
-        File(
-            description=(
-                "Asset photos (2–10). In Swagger: click **Add item** and choose one file per row."
-            ),
-        ),
-    ],
-    angles: Annotated[
-        str | None,
-        Form(description="Comma-separated angle labels, e.g. Front,Back,Left,Right"),
+    image: Annotated[
+        UploadFile | None,
+        File(description="Single asset photo (JPEG, PNG, or WebP). Omit if using image_base64."),
     ] = None,
-    locale: Annotated[str, Form(description="Output language")] = "en",
-    asset_name: Annotated[
+    image_base64: Annotated[
         str | None,
-        Form(description="Optional user-provided asset name for validation"),
-    ] = None,
-    description: Annotated[
-        str | None,
-        Form(description="Optional user-provided description for validation"),
-    ] = None,
-    tag_image_index: Annotated[
-        int | None,
         Form(
             description=(
-                "0-based index of the upload whose tag/barcode should be used for OCR "
-                "(overrides automatic tag-view selection)"
+                "Base64 image or data URL (e.g. data:image/jpeg;base64,...). "
+                "Omit if using image file upload."
             ),
         ),
     ] = None,
+    locale: Annotated[str, Form(description="Output language")] = "en",
     settings: Settings = Depends(get_settings),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
     analyzer: AssetAnalysisService = Depends(get_analyzer),
 ) -> AnalyzeResponse:
     rate_limiter.check("poc")
-    parsed_files = await parse_uploaded_images(images, settings)
-    angle_list = parse_angle_labels(angles)
+    parsed_file = await resolve_image_input(image, image_base64, settings)
 
     with timer() as elapsed:
         try:
-            result = await analyzer.analyze(
-                files=parsed_files,
-                angles=angle_list,
-                locale=locale,
-                tag_image_index=tag_image_index,
-                user_asset_name=asset_name,
-                user_description=description,
-            )
+            result = await analyzer.analyze(file=parsed_file, locale=locale)
         except ValueError as exc:
             REQUEST_COUNT.labels(status="400").inc()
             raise HTTPException(
@@ -235,7 +97,7 @@ async def analyze_assets(
 
     REQUEST_COUNT.labels(status="200").inc()
     REQUEST_LATENCY.observe(elapsed[0] / 1000)
-    STITCH_METHOD.labels(method=result.unified_view.method.value).inc()
+    ANALYSIS_METHOD.labels(method=result.unified_view.method.value).inc()
     return result
 
 
@@ -249,8 +111,11 @@ _job_store: dict[str, dict] = {}
     summary="Analyze asset asynchronously",
 )
 async def analyze_assets_async(
-    images: Annotated[list[UploadFile], File(description="Asset photos (2–10)")],
-    angles: Annotated[str | None, Form()] = None,
+    image: Annotated[
+        UploadFile | None,
+        File(description="Single asset photo. Omit if using image_base64."),
+    ] = None,
+    image_base64: Annotated[str | None, Form()] = None,
     locale: Annotated[str, Form()] = "en",
     settings: Settings = Depends(get_settings),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
@@ -258,8 +123,7 @@ async def analyze_assets_async(
 ) -> dict:
     rate_limiter.check("poc")
     job_id = str(uuid.uuid4())
-    parsed_files = await parse_uploaded_images(images, settings)
-    angle_list = parse_angle_labels(angles)
+    parsed_file = await resolve_image_input(image, image_base64, settings)
 
     _job_store[job_id] = {"status": "processing", "result": None}
 
@@ -267,11 +131,7 @@ async def analyze_assets_async(
 
     async def _run():
         try:
-            result = await analyzer.analyze(
-                files=parsed_files,
-                angles=angle_list,
-                locale=locale,
-            )
+            result = await analyzer.analyze(file=parsed_file, locale=locale)
             _job_store[job_id] = {"status": "completed", "result": result.model_dump()}
         except Exception as exc:
             _job_store[job_id] = {"status": "failed", "error": str(exc)}

@@ -1,16 +1,14 @@
-"""Image quality scoring."""
+"""Image quality scoring (Pillow/numpy only)."""
 
-import cv2
 import numpy as np
+from PIL import Image
 
 
-def score_blur(cv_image: np.ndarray) -> float:
-    gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+def score_blur(pil_image: Image.Image) -> float:
+    gray = np.array(pil_image.convert("L"), dtype=np.float64)
+    gy, gx = np.gradient(gray)
+    return float(np.var(gx) + np.var(gy))
 
 
-def score_image_quality(blur_scores: list[float]) -> float:
-    if not blur_scores:
-        return 0.0
-    normalized = [min(1.0, score / 200.0) for score in blur_scores]
-    return round(sum(normalized) / len(normalized), 3)
+def score_image_quality(blur_score: float) -> float:
+    return round(min(1.0, blur_score / 200.0), 3)

@@ -18,13 +18,7 @@ def aggregate_confidence(
     }
     gemini_mean = sum(gemini_scores.values()) / len(gemini_scores)
 
-    stitching = pipeline.unified_view.stitching_confidence
-
-    overall = (
-        0.45 * gemini_mean
-        + 0.25 * pipeline.image_quality_score
-        + 0.30 * stitching
-    )
+    overall = 0.55 * gemini_mean + 0.45 * pipeline.image_quality_score
     overall = max(0.0, min(1.0, overall))
 
     scores = ConfidenceScores(

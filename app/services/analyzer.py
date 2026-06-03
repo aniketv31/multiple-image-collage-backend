@@ -10,15 +10,10 @@ from app.models.pipeline import PipelineResult, UnifiedViewResult
 from app.models.responses import (
     AnalyzeResponse,
     AnalyzeUnifiedView,
-    PanoramaResponse,
-    UnifiedViewInfo,
     UnifiedViewMethod,
-    ValidationFields,
 )
-from app.pipeline.analysis_composite import compose_analysis_composite
-from app.pipeline.image_utils import hash_image_set, image_to_base64
-from app.pipeline.preprocess import compute_quality_score, preprocess_images
-from app.pipeline.unified_view import build_unified_view
+from app.pipeline.image_utils import hash_image_set
+from app.pipeline.preprocess import compute_quality_score, preprocess_single_image
 from app.services.field_merger import composite_to_gemini_result, to_asset_fields
 from app.services.gemini import GeminiService, _normalize_barcode_position
 from app.utils.confidence import aggregate_confidence
@@ -36,85 +31,32 @@ class AssetAnalysisService:
         self.gemini = gemini
         self._cache: dict[str, AnalyzeResponse] = {}
 
-    async def create_panorama(
-        self,
-        files: list[tuple],
-        angles: list[str] | None = None,
-        include_image_base64: bool = True,
-        layout: str | None = None,
-    ) -> PanoramaResponse:
-        """Build unified panorama/grid image only (no Gemini call)."""
-        request_id = str(uuid.uuid4())
-        start = time.perf_counter()
-
-        processed, quality_warnings = preprocess_images(files, angles, self.settings)
-        unified = build_unified_view(
-            processed, self.settings, quality_warnings, layout=layout
-        )
-
-        image_base64 = image_to_base64(unified.image) if include_image_base64 else None
-
-        elapsed_ms = int((time.perf_counter() - start) * 1000)
-        method = UnifiedViewMethod(unified.method)
-
-        logger.info(
-            "panorama_created",
-            request_id=request_id,
-            method=unified.method,
-            image_count=len(processed),
-            elapsed_ms=elapsed_ms,
-        )
-
-        return PanoramaResponse(
-            request_id=request_id,
-            status="success",
-            processing_time_ms=elapsed_ms,
-            unified_view=UnifiedViewInfo(
-                method=method,
-                image_url=None,
-                image_base64=image_base64,
-                width=unified.image.width,
-                height=unified.image.height,
-                stitching_confidence=unified.stitching_confidence,
-            ),
-            quality_warnings=list(set(quality_warnings + unified.quality_warnings)),
-            image_count=len(processed),
-        )
-
     async def analyze(
         self,
-        files: list[tuple],
-        angles: list[str] | None = None,
+        file: tuple,
         locale: str = "en",
         use_cache: bool = True,
-        tag_image_index: int | None = None,
-        user_asset_name: str | None = None,
-        user_description: str | None = None,
     ) -> AnalyzeResponse:
         request_id = str(uuid.uuid4())
-        raw_bytes_list = [raw for _, _, raw in files]
+        _file_obj, _filename, raw_bytes = file
 
-        if use_cache and not user_asset_name:
-            cache_key = hash_image_set(raw_bytes_list)
+        if use_cache:
+            cache_key = hash_image_set([raw_bytes])
             cached = self._cache.get(cache_key)
             if cached:
                 return cached.model_copy(update={"request_id": request_id})
 
         start = time.perf_counter()
 
-        processed, quality_warnings = preprocess_images(files, angles, self.settings)
+        processed, quality_warnings = preprocess_single_image(file, self.settings)
         quality_score = compute_quality_score(processed)
 
-        composite = compose_analysis_composite(
-            processed,
-            self.settings,
-            tag_image_index=tag_image_index,
-        )
+        pil_for_gemini = processed.pil_image
 
         unified = UnifiedViewResult(
-            image=composite.image,
-            method=UnifiedViewMethod.ANALYSIS_COMPOSITE.value,
-            stitching_confidence=1.0,
+            image=pil_for_gemini,
+            method=UnifiedViewMethod.DIRECT_IMAGE.value,
+            quality_warnings=quality_warnings,
         )
 
         pipeline_result = PipelineResult(
@@ -123,16 +65,14 @@ class AssetAnalysisService:
             quality_warnings=quality_warnings,
         )
 
-        composite_result = await self.gemini.extract_from_composite(
-            composite.image,
+        gemini_result_raw = await self.gemini.extract_from_image(
+            pil_for_gemini,
             locale=locale,
-            user_asset_name=user_asset_name,
-            user_description=user_description,
         )
 
-        raw_tag_number = composite_result.detectedtagnumber
+        raw_tag_number = gemini_result_raw.detectedtagnumber
         gemini_result = composite_to_gemini_result(
-            composite_result, self.settings
+            gemini_result_raw, self.settings
         )
 
         if gemini_result.detectedtagnumber and str(gemini_result.detectedtagnumber).upper() == "UNREADABLE":
@@ -145,14 +85,6 @@ class AssetAnalysisService:
             gemini_result, pipeline_result, self.settings
         )
 
-        validation: ValidationFields | None = None
-        if user_asset_name and composite_result.namedescriptionmatch is not None:
-            validation = ValidationFields(
-                namedescriptionmatch=composite_result.namedescriptionmatch,
-                namedescriptionmatchpercent=composite_result.namedescriptionmatchpercent,
-                reasoning=composite_result.reasoning,
-            )
-
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         response = AnalyzeResponse(
@@ -160,36 +92,27 @@ class AssetAnalysisService:
             status="success",
             processing_time_ms=elapsed_ms,
             unified_view=AnalyzeUnifiedView(
-                method=UnifiedViewMethod.ANALYSIS_COMPOSITE,
-                width=composite.image.width,
-                height=composite.image.height,
-                stitching_confidence=1.0,
+                method=UnifiedViewMethod.DIRECT_IMAGE,
+                width=pil_for_gemini.width,
+                height=pil_for_gemini.height,
             ),
             asset=to_asset_fields(gemini_result, self.settings),
             tag_detection_reasoning=gemini_result.tag_detection_reasoning,
             barcodeposition=_normalize_barcode_position(gemini_result.barcodeposition),
             image_readability=gemini_result.imageReadability,
             detected_tag_number_raw=raw_tag_number,
-            tag_zoom_source_label=composite.tag_zoom_source_label,
-            validation=validation,
-            visible_labels=list(composite_result.visible_labels),
+            visible_labels=list(gemini_result_raw.visible_labels),
         )
 
-        if use_cache and not user_asset_name:
-            cache_key = hash_image_set(raw_bytes_list)
+        if use_cache:
+            cache_key = hash_image_set([raw_bytes])
             self._cache[cache_key] = response
 
         logger.info(
             "analysis_complete",
             request_id=request_id,
-            method=UnifiedViewMethod.ANALYSIS_COMPOSITE.value,
+            method=UnifiedViewMethod.DIRECT_IMAGE.value,
             review_required=review_required,
-            tag_detection_method=composite.tag_detection_method.value,
-            gemini_calls=1,
-            composite_layout=composite.composite_layout,
-            jpeg_bytes=composite.jpeg_bytes,
-            tag_zoom_row_px=composite.tag_zoom_row_px,
-            tag_zoom_source_label=composite.tag_zoom_source_label,
             detectedtagnumber_raw=raw_tag_number,
             detectedtagnumber_normalized=gemini_result.detectedtagnumber,
             elapsed_ms=elapsed_ms,

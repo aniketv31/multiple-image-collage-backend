@@ -1,15 +1,13 @@
-# Multi-Image Asset Analysis API
+# Asset Analysis API
 
-Backend for multi-image asset validation (`multiple-image-validation-backend`).
+Backend for asset validation (`multiple-image-validation-backend`).
 
-Production-ready FastAPI service that accepts 2–10 images of a physical asset, builds a high-resolution analysis contact sheet (HRC), and extracts structured metadata via a single Google Gemini call.
+Production-ready FastAPI service that accepts **one** image of a physical asset, applies light preprocessing (EXIF, resize), and extracts structured metadata via a single Google Gemini call.
 
 ## Features
 
-- **Collage contact sheet (HRC)**: One canvas with labeled angle boxes (aspect-fit, no warp) plus a TAG ZOOM row (raw + enhanced ROI) — one JPEG sent to Gemini
-- **Single Gemini call**: Asset understanding, tag/barcode OCR, and optional name validation in one API request (no second tag pass)
-- **Panorama preview**: `/panorama` defaults to the same collage layout; optional `layout=stitch` or `grid`. Side/tag angles are not stitched (avoids 160×120 warp)
-- **Tag view selection**: Optional `tag_image_index` form field, angle hints (`tag`, `barcode`, …), or edge-density heuristic for TAG ZOOM crops
+- **Direct image analysis**: One photo preprocessed and sent to Gemini (no server-side collage or TAG ZOOM)
+- **Single Gemini call**: Asset understanding and tag/barcode OCR in one request
 - **Async endpoint**: Optional job-based analysis at `POST /v1/assets/analyze/async`
 - **Observability**: Structured JSON logs, Prometheus metrics at `/metrics`
 
@@ -43,6 +41,26 @@ Open http://localhost:8000/docs for interactive API documentation.
    ```
 6. CORS is already `allow_origins=["*"]`, so browsers on other devices can call the API.
 
+### UI contract
+
+**File upload:**
+
+```javascript
+const form = new FormData();
+form.append("image", file);
+await fetch(`${API_BASE}/v1/assets/analyze`, { method: "POST", body: form });
+```
+
+**Base64** (send one of `image` or `image_base64`, not both):
+
+```javascript
+const form = new FormData();
+form.append("image_base64", dataUrlOrRawBase64);
+await fetch(`${API_BASE}/v1/assets/analyze`, { method: "POST", body: form });
+```
+
+Data URLs are supported, e.g. `data:image/jpeg;base64,/9j/4AAQ...`. **`image_base64` has no length cap for now** (file upload still respects `MAX_IMAGE_SIZE_MB`).
+
 ### "Refused to connect" from phone
 
 | Check | Fix |
@@ -65,37 +83,28 @@ Must show **`0.0.0.0:8000`** LISTENING. If you only see **`127.0.0.1:8000`**, LA
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/assets/panorama` | Upload multiple images → unified panorama/grid preview only |
-| `POST /v1/assets/analyze` | Upload multiple images → HRC contact sheet + single Gemini extraction |
+| `POST /v1/assets/analyze` | Upload one image → preprocess → single Gemini extraction |
+| `POST /v1/assets/analyze/async` | Same as analyze, returns job id for polling |
+| `GET /v1/health` | Health check |
 
-### Swagger multi-image upload
+### Swagger upload
 
 1. Open **/docs**
-2. Expand **Panorama** or **Analysis** endpoint
+2. Expand **Analysis** → `POST /v1/assets/analyze`
 3. Click **Try it out**
-4. For **images**, click **Add item** once per photo (2–10 rows)
-5. Optionally set **angles** e.g. `Front,Back,Left,Right`
-6. Execute — response includes `image_base64` for inline preview (images are not stored on disk)
+4. Choose one file for **image**
+5. Execute — JSON includes asset fields and image dimensions (no image file in response)
 
 ## API Usage (curl)
 
 ```bash
-# Preview panorama only
-curl -X POST "http://localhost:8000/v1/assets/panorama" \
-  -F "images=@front.jpg" \
-  -F "images=@back.jpg" \
-  -F "images=@left.jpg" \
-  -F "angles=Front,Back,Left" \
-  -F "layout=collage" \
-  -F "include_image_base64=true"
-
-# Full Gemini analysis (single composite + single call)
+# File upload
 curl -X POST "http://localhost:8000/v1/assets/analyze" \
-  -F "images=@front.jpg" \
-  -F "images=@back.jpg" \
-  -F "images=@left.jpg" \
-  -F "angles=Front,Back,Left" \
-  -F "tag_image_index=2"
+  -F "image=@photo.jpg"
+
+# Base64 (raw or data URL)
+curl -X POST "http://localhost:8000/v1/assets/analyze" \
+  -F "image_base64=$(base64 -w0 photo.jpg)"
 ```
 
 ## Deploy to Vercel
@@ -124,7 +133,7 @@ vercel --prod
 ```bash
 git init
 git add .
-git commit -m "Initial commit: multi-image asset analysis API"
+git commit -m "Initial commit: asset analysis API"
 git remote add origin https://github.com/aniketv31/multiple-image-validation-backend.git
 git branch -M main
 git push -u origin main
@@ -142,23 +151,15 @@ docker compose up --build
 
 See [.env.example](.env.example) for all settings.
 
-Key analysis composite settings:
-
 | Setting | Default | Purpose |
 |---|---|---|
-| `MAX_GEMINI_COMPOSITE_BYTES` | 6500000 | JPEG size budget (under Gemini 7MB limit) |
-| `MAX_COMPOSITE_WIDTH_PX` | 4096 | Max canvas width |
-| `ANALYSIS_MIN_CELL_PX` | 640 | Minimum panel size |
-| `ANALYSIS_MAX_CELL_PX` | 1280 | Maximum panel size |
-| `COLLAGE_TAG_SLOT_SCALE` | 1.35 | Tag collage cell width multiplier |
-| `TAG_ZOOM_ROW_MIN_PX` | 400 | Minimum height for TAG ZOOM row |
-| `GEMINI_TAG_MAX_EDGE_PX` | 2048 | Max edge for tag ROI before zoom row |
-| `PANORAMA_DEFAULT_LAYOUT` | collage | Panorama preview layout |
+| `MAX_PREPROCESS_EDGE_PX` | 2048 | Max longest edge before Gemini |
+| `MAX_IMAGE_SIZE_MB` | 7 | Upload size limit |
 | `GEMINI_ANALYZE_TEMPERATURE` | 0.0 | Temperature for analyze call |
 
 ### Prompts
 
-All Gemini instructions for `/assets/analyze` live in a single file: [`app/prompts/analysis.txt`](app/prompts/analysis.txt). It covers asset identification, condition, barcode OCR, and optional name validation (injected at runtime when `asset_name` is provided).
+All Gemini instructions for `/assets/analyze` live in [`app/prompts/analysis.txt`](app/prompts/analysis.txt). It covers asset identification, condition, and barcode OCR.
 
 ## Development
 

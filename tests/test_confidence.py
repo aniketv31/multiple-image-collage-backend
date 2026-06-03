@@ -1,21 +1,21 @@
 """Tests for confidence aggregation."""
 
+from PIL import Image
+
 from app.config import Settings
 from app.models.pipeline import PipelineResult, UnifiedViewResult
 from app.models.responses import GeminiExtractionResult
 from app.utils.confidence import aggregate_confidence
-from PIL import Image
 
 
-def _pipeline(stitch_conf: float = 0.0) -> PipelineResult:
+def _pipeline(quality: float = 0.8) -> PipelineResult:
     img = Image.new("RGB", (800, 600), (128, 128, 128))
     return PipelineResult(
         unified_view=UnifiedViewResult(
             image=img,
-            method="labeled_grid",
-            stitching_confidence=stitch_conf,
+            method="direct_image",
         ),
-        image_quality_score=0.8,
+        image_quality_score=quality,
         quality_warnings=[],
     )
 
@@ -43,6 +43,6 @@ def test_aggregate_confidence_high_scores():
         confidence_asset_description=0.88,
         confidence_asset_tag_number=0.92,
     )
-    scores, review = aggregate_confidence(gemini, _pipeline(0.7), settings)
+    scores, review = aggregate_confidence(gemini, _pipeline(0.9), settings)
     assert review is False
     assert scores.overall >= 0.65

@@ -14,8 +14,8 @@ REQUEST_LATENCY = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 15, 30, 60),
 )
 
-STITCH_METHOD = Counter(
-    "asset_unified_view_method_total",
-    "Unified view generation method used",
+ANALYSIS_METHOD = Counter(
+    "asset_analysis_method_total",
+    "Analysis method used",
     ["method"],
 )

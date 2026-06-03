@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
 from app.api.v1.router import router as v1_router
+from app.middleware.multipart import MultipartSizeMiddleware
 from app.utils.network import get_all_lan_ipv4, get_lan_ipv4
 
 structlog.configure(
@@ -26,8 +27,8 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Multi-Image Asset Analysis API",
-        description="Analyze physical assets from multiple images using adaptive stitching and Gemini AI",
+        title="Asset Analysis API",
+        description="Analyze physical assets from a single photo using Gemini AI",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -38,6 +39,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # After CORS so the patched Request reaches route handlers (Starlette default part cap is 1MB).
+    app.add_middleware(MultipartSizeMiddleware)
 
     app.include_router(v1_router)
     app.mount("/metrics", make_asgi_app())

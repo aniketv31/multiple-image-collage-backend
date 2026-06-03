@@ -7,11 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class UnifiedViewMethod(str, Enum):
-    STITCHED_PANORAMA = "stitched_panorama"
-    LABELED_GRID = "labeled_grid"
-    HYBRID = "hybrid"
-    ANALYSIS_COMPOSITE = "analysis_composite"
-    COLLAGE_CONTACT_SHEET = "collage_contact_sheet"
+    DIRECT_IMAGE = "direct_image"
 
 
 class AssetFields(BaseModel):
@@ -27,17 +23,10 @@ class ValidationFields(BaseModel):
     reasoning: Optional[str] = None
 
 
-class AnalysisSources(BaseModel):
-    gemini_input: str = "single_analysis_composite"
-    tag_image_labels: list[str] = Field(default_factory=list)
-    tag_detection_method: Optional[str] = None
-
-
 class AnalyzeUnifiedView(BaseModel):
     method: UnifiedViewMethod
     width: int
     height: int
-    stitching_confidence: float = Field(ge=0.0, le=1.0)
 
 
 class AssetAnalysisResult(BaseModel):
@@ -70,15 +59,6 @@ class ConfidenceScores(BaseModel):
     asset_tag_number: float = Field(ge=0.0, le=1.0)
 
 
-class UnifiedViewInfo(BaseModel):
-    method: UnifiedViewMethod
-    image_url: Optional[str] = None
-    image_base64: Optional[str] = None
-    width: int
-    height: int
-    stitching_confidence: float = Field(ge=0.0, le=1.0)
-
-
 class AnalyzeResponse(BaseModel):
     request_id: str
     status: str = "success"
@@ -89,17 +69,8 @@ class AnalyzeResponse(BaseModel):
     barcodeposition: Optional[str] = None
     image_readability: Optional[str] = None
     detected_tag_number_raw: Optional[str] = None
-    tag_zoom_source_label: Optional[str] = None
     validation: Optional[ValidationFields] = None
     visible_labels: list[str] = Field(default_factory=list)
-
-class PanoramaResponse(BaseModel):
-    request_id: str
-    status: str = "success"
-    processing_time_ms: int
-    unified_view: UnifiedViewInfo
-    quality_warnings: list[str] = Field(default_factory=list)
-    image_count: int
 
 
 class HealthResponse(BaseModel):
@@ -124,7 +95,7 @@ class GeminiExtractionResult(BaseModel):
 
 
 class CompositeAnalysisResult(BaseModel):
-    """Unified Gemini output from single HRC composite call."""
+    """Unified Gemini output from single image call."""
 
     detectedAsset: Optional[str] = None
     imageAnalysis: Optional[str] = None

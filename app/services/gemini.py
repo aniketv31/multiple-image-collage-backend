@@ -1,4 +1,4 @@
-"""Gemini AI Studio client — single composite analysis pipeline."""
+"""Gemini AI Studio client — single image analysis pipeline."""
 
 import asyncio
 from typing import Any
@@ -44,24 +44,22 @@ class GeminiService:
     def is_configured(self) -> bool:
         return bool(self.settings.gemini_api_key)
 
-    async def extract_from_composite(
+    async def extract_from_image(
         self,
-        composite_image: Image.Image,
+        image: Image.Image,
         locale: str = "en",
-        user_asset_name: str | None = None,
-        user_description: str | None = None,
     ) -> CompositeAnalysisResult:
         if not self.is_configured():
             raise RuntimeError("Gemini API key is not configured")
 
-        prompt = get_analysis_prompt(user_asset_name, user_description)
+        prompt = get_analysis_prompt()
         if locale != "en":
             prompt += f"\n\nRespond in locale: {locale}."
 
         parts: list[types.Part] = [
             types.Part.from_text(text=prompt),
             types.Part.from_bytes(
-                data=image_to_bytes(composite_image),
+                data=image_to_bytes(image),
                 mime_type="image/jpeg",
             ),
         ]

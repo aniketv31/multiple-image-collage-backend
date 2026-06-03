@@ -5,12 +5,12 @@ from app.prompts.loader import get_analysis_prompt
 
 def test_analysis_prompt_core_fields():
     prompt = get_analysis_prompt()
-    assert "TAG ZOOM" in prompt
-    assert "upright" in prompt.lower()
+    assert "ONE photograph" in prompt
     assert "detectedtagnumber" in prompt
     assert "detectedAsset" in prompt
     assert "damage_assessment" in prompt
     assert "visible_labels" in prompt
+    assert "TAG ZOOM" not in prompt
 
 
 def test_analysis_prompt_with_validation():
@@ -22,5 +22,5 @@ def test_analysis_prompt_with_validation():
 
 def test_analysis_prompt_without_validation():
     prompt = get_analysis_prompt(None, None)
-    assert "TAG ZOOM" in prompt
+    assert "ONE photograph" in prompt
     assert "User's Asset Name" not in prompt

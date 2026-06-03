@@ -1,5 +1,6 @@
 """API integration tests."""
 
+import base64
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,15 +26,12 @@ def test_health_endpoint(client):
     assert "gemini_configured" in data
 
 
-def test_analyze_requires_minimum_images(client):
+def test_analyze_requires_image(client):
     app = create_app()
     test_client = TestClient(app)
-    img = make_test_image((100, 100, 100))
-    response = test_client.post(
-        "/v1/assets/analyze",
-        files=[("images", ("a.jpg", img, "image/jpeg"))],
-    )
+    response = test_client.post("/v1/assets/analyze", data={})
     assert response.status_code == 400
+    assert "image_base64" in response.json()["detail"]
 
 
 def test_analyze_success_mocked(client):
@@ -44,8 +42,8 @@ def test_analyze_success_mocked(client):
         damage_assessment="Good condition with minor cosmetic wear.",
         detectedtagnumber="1234567890123456",
         imageReadability="Y",
-        tag_detection_reasoning="View Front. Rotated 0°. Counted 6 digits. High confidence.",
-        barcodeposition={"position": "Front panel, center-right of Front view"},
+        tag_detection_reasoning="Single photo. Rotated 0°. Counted 6 digits. High confidence.",
+        barcodeposition={"position": "Front panel, center-right"},
         visible_labels=["R32 Eco-Friendly"],
         confidence_asset_name=0.9,
         confidence_asset_condition=0.8,
@@ -56,18 +54,16 @@ def test_analyze_success_mocked(client):
     with (
         patch("app.api.v1.assets.get_settings", return_value=settings),
         patch(
-            "app.services.gemini.GeminiService.extract_from_composite",
+            "app.services.gemini.GeminiService.extract_from_image",
             new=AsyncMock(return_value=mock_result),
         ) as mock_extract,
     ):
         app = create_app()
         test_client = TestClient(app)
-        images = [make_test_image((i * 30, 60, 90)) for i in range(3)]
-        files = [("images", (f"img{i}.jpg", img, "image/jpeg")) for i, img in enumerate(images)]
+        img = make_test_image((90, 120, 150))
         response = test_client.post(
             "/v1/assets/analyze",
-            data={"angles": "Front,Back,Left"},
-            files=files,
+            files=[("image", ("photo.jpg", img, "image/jpeg"))],
         )
 
     assert response.status_code == 200
@@ -75,12 +71,13 @@ def test_analyze_success_mocked(client):
     data = response.json()
     assert data["status"] == "success"
     assert data["asset"]["asset_name"] == "Test Asset"
-    assert data["unified_view"]["method"] == "analysis_composite"
+    assert data["unified_view"]["method"] == "direct_image"
     assert "image_base64" not in data["unified_view"]
     assert "image_url" not in data["unified_view"]
     assert "confidence" not in data
     assert "quality_warnings" not in data
     assert "review_required" not in data
+    assert "tag_zoom_source_label" not in data
     assert data["image_readability"] == "Y"
     assert data["detected_tag_number_raw"] == "1234567890123456"
     assert data["asset"]["asset_tag_number"] == "1234567890123456"
@@ -88,26 +85,34 @@ def test_analyze_success_mocked(client):
     assert data["visible_labels"] == ["R32 Eco-Friendly"]
 
 
-def test_panorama_success(client):
-    app = create_app()
-    test_client = TestClient(app)
-    images = [make_test_image((i * 30, 60, 90)) for i in range(3)]
-    files = [("images", (f"img{i}.jpg", img, "image/jpeg")) for i, img in enumerate(images)]
-    response = test_client.post(
-        "/v1/assets/panorama",
-        data={"angles": "Front,Back,Left", "include_image_base64": "true"},
-        files=files,
+def test_analyze_success_base64_mocked(client):
+    settings = Settings(gemini_api_key="fake-key")
+    mock_result = CompositeAnalysisResult(
+        detectedAsset="Base64 Asset",
+        imageReadability="Y",
+        confidence_asset_name=0.8,
+        confidence_asset_condition=0.8,
+        confidence_asset_description=0.8,
+        confidence_asset_tag_number=0.8,
     )
 
+    img = make_test_image((10, 20, 30))
+    b64 = base64.b64encode(img).decode("ascii")
+
+    with (
+        patch("app.api.v1.assets.get_settings", return_value=settings),
+        patch(
+            "app.services.gemini.GeminiService.extract_from_image",
+            new=AsyncMock(return_value=mock_result),
+        ) as mock_extract,
+    ):
+        app = create_app()
+        test_client = TestClient(app)
+        response = test_client.post(
+            "/v1/assets/analyze",
+            data={"image_base64": f"data:image/jpeg;base64,{b64}"},
+        )
+
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert data["image_count"] == 3
-    assert data["unified_view"]["method"] in (
-        "collage_contact_sheet",
-        "labeled_grid",
-        "hybrid",
-        "stitched_panorama",
-    )
-    assert data["unified_view"]["image_base64"] is not None
-    assert data["unified_view"]["image_url"] is None
+    mock_extract.assert_awaited_once()
+    assert response.json()["asset"]["asset_name"] == "Base64 Asset"
