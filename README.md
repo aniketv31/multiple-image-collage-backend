@@ -108,7 +108,9 @@ curl -X POST "http://localhost:8000/v1/assets/analyze" \
    - Other keys from [`.env.example`](.env.example) as needed
 4. Deploy. API base URL: `https://<your-project>.vercel.app`
 
-**Note:** `/v1/assets/analyze` can take 20–60 seconds. `vercel.json` sets `maxDuration: 60` (requires Vercel **Pro** on many plans; Hobby is often 10s). If requests time out, use Docker/Railway/Render instead.
+**Note:** `/v1/assets/analyze` can take 20–60 seconds. In Vercel → Project → Settings → Functions, set **Max Duration** (e.g. 60s) and **Memory** (max 2048 MB on Hobby). If requests time out, use Docker/Railway/Render instead.
+
+**Deploy uses** `pyproject.toml` → `[tool.vercel] entrypoint = "app.main:app"`. Do not add `api/index.py` in `vercel.json` `functions` — that causes build errors on current Vercel CLI.
 
 ```bash
 # CLI deploy (after npm i -g vercel)
