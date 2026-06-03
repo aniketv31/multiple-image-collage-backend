@@ -1,5 +1,7 @@
 # Multi-Image Asset Analysis API
 
+Backend for multi-image asset validation (`multiple-image-validation-backend`).
+
 Production-ready FastAPI service that accepts 2–10 images of a physical asset, builds a high-resolution analysis contact sheet (HRC), and extracts structured metadata via a single Google Gemini call.
 
 ## Features
