@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models.responses import LLMAnalysisResult, TokenUsage
+from app.models.responses import LLMAnalysisResult, LLMStickerItem, TokenUsage
 from app.services.fx import FxResult
 from tests.conftest import make_test_image
 
@@ -53,17 +53,45 @@ def _mock_llm() -> LLMAnalysisResult:
                 "type": "dent",
                 "severity": "moderate",
                 "seen_in_image": 2,
+                "horizontal": "left",
+                "in_frame_position": "upper-left",
                 "detail": "A ~1cm dent on the rear-left corner of the lid.",
                 "affects_function": False,
                 "repair_action": "Reshape or replace lid panel.",
             },
-            {"location": "Palm rest", "type": "scratch", "severity": "minor", "seen_in_image": 1},
+            {
+                "location": "Palm rest",
+                "type": "scratch",
+                "severity": "minor",
+                "seen_in_image": 1,
+                "horizontal": "center",
+            },
         ],
         asset_tag_number="1234567890123456",
-        tag_detection_reasoning="Tag on base, Image 3. 16 digits.",
-        barcode_position="Base panel, Image 3",
-        visible_labels=["Dell", "Latitude 5420"],
         tag_readable=True,
+        tag_detection_reasoning="Tag on base, Image 3. 16 digits.",
+        barcode_present=True,
+        barcode_asset_location="base panel",
+        barcode_horizontal="right",
+        barcode_seen_in_image=3,
+        barcode_position="Base panel, Image 3",
+        stickers=[
+            LLMStickerItem(
+                label_text="Dell",
+                sticker_type="brand",
+                asset_location="lid",
+                horizontal="center",
+                seen_in_image=1,
+            ),
+            LLMStickerItem(
+                label_text="Latitude 5420",
+                sticker_type="spec",
+                asset_location="palm rest",
+                horizontal="left",
+                seen_in_image=1,
+            ),
+        ],
+        visible_labels=["Dell", "Latitude 5420"],
         confidence_asset_name=0.9,
         confidence_asset_condition=0.8,
         confidence_asset_description=0.85,
@@ -167,12 +195,20 @@ def test_analyze_success_mocked(path, method):
     assert cond["damage_items"][0]["detail"]
     assert cond["damage_items"][0]["affects_function"] is False
     assert cond["damage_items"][0]["repair_action"] == "Reshape or replace lid panel."
+    assert cond["damage_items"][0]["placement"]["seen_in_image"] == 2
+    assert cond["damage_items"][0]["placement"]["horizontal"] == "left"
 
     ids = data["identifiers"]
     assert ids["asset_tag_number"] == "1234567890123456"
     assert ids["asset_tag_number_raw"] == "1234567890123456"
     assert ids["tag_readable"] is True
-    assert ids["visible_labels"] == ["Dell", "Latitude 5420"]
+    assert ids["tag_position"] == "Base panel, Image 3"
+    assert "Dell" in ids["visible_labels"]
+    assert "Latitude 5420" in ids["visible_labels"]
+    assert "Intel Core i7" in ids["visible_labels"]
+    assert len(ids["stickers"]) >= 4
+    assert ids["barcode"]["present"] is True
+    assert ids["barcode"]["placement"]["seen_in_image"] == 3
 
     val = data["valuation"]
     assert val["as_is"]["usd"]["min"] == 120

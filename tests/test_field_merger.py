@@ -53,3 +53,10 @@ def test_to_asset_details_normalizes_unreadable_tag_and_quantity():
     assert asset.name == "Office chair"
     assert asset.asset_tag_number is None
     assert asset.quantity == 1  # invalid quantity falls back to 1
+    assert asset.estimated_age == "Unknown"
+
+
+def test_to_asset_details_estimated_age_unknown_when_null():
+    asset = to_asset_details(LLMAnalysisResult(asset_name="AC unit"))
+    assert asset.estimated_age == "Unknown"
+    assert asset.quantity == 1

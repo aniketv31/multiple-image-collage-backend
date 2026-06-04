@@ -13,9 +13,7 @@ from app.models.responses import (
     AssetDetails,
     ConditionReport,
     ConfidenceScores,
-    DamageItem,
     DamageSeverityCounts,
-    Identifiers,
     LLMAnalysisResult,
     MoneyRange,
     UnifiedViewMethod,
@@ -29,6 +27,17 @@ from app.services.cost import compute_cost
 from app.services.field_merger import _clean_list, to_asset_details
 from app.services.fx import get_usd_to_inr
 from app.services.gemini import GeminiService
+from app.services.condition_mapper import (
+    build_damage_items,
+    damage_needs_review,
+    stickers_need_review,
+)
+from app.services.placement_mapper import (
+    build_identifiers,
+    identifiers_need_review,
+    merge_sticker_sources,
+    stickers_image_index_need_review,
+)
 
 logger = structlog.get_logger()
 
@@ -63,21 +72,33 @@ class AssetAnalysisService:
             gemini_images = images
             media_resolution = self.settings.media_resolution_multi
 
+        image_labels = [p.label for p in processed]
         llm, usage = await self.gemini.analyze_images(
-            gemini_images, media_resolution=media_resolution, locale=locale
+            gemini_images,
+            media_resolution=media_resolution,
+            locale=locale,
+            image_labels=image_labels if method == UnifiedViewMethod.MULTI_IMAGE else None,
         )
+
+        llm = merge_sticker_sources(llm, images_analyzed=len(processed))
 
         fx = await get_usd_to_inr(self.settings)
         cost = compute_cost(usage, fx, self.settings)
 
         asset: AssetDetails = to_asset_details(llm, self.settings)
-        condition = self._build_condition(llm)
-        identifiers = self._build_identifiers(llm, asset.asset_tag_number)
+        condition = self._build_condition(llm, len(processed))
+        identifiers = build_identifiers(
+            llm, asset.asset_tag_number, images_analyzed=len(processed)
+        )
         confidence = self._build_confidence(llm)
         valuation = self._build_valuation(llm, fx.rate)
         review_required = (
             confidence.overall < self.settings.review_confidence_threshold
             or not identifiers.tag_readable
+            or identifiers_need_review(llm, asset.asset_tag_number, len(processed))
+            or stickers_need_review(llm)
+            or stickers_image_index_need_review(llm.stickers, len(processed))
+            or damage_needs_review(llm)
         )
 
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -122,19 +143,8 @@ class AssetAnalysisService:
         return response
 
     @staticmethod
-    def _build_condition(llm: LLMAnalysisResult) -> ConditionReport:
-        items = [
-            DamageItem(
-                location=d.location,
-                type=d.type,
-                severity=d.severity,
-                seen_in_image=d.seen_in_image,
-                detail=d.detail,
-                affects_function=d.affects_function,
-                repair_action=d.repair_action,
-            )
-            for d in llm.damage_items
-        ]
+    def _build_condition(llm: LLMAnalysisResult, images_analyzed: int) -> ConditionReport:
+        items = build_damage_items(llm, images_analyzed)
         counts = DamageSeverityCounts()
         for item in items:
             sev = (item.severity or "").strip().lower()
@@ -170,18 +180,6 @@ class AssetAnalysisService:
             damage_count=len(items),
             damage_by_severity=counts,
             damage_items=items,
-        )
-
-    @staticmethod
-    def _build_identifiers(llm: LLMAnalysisResult, normalized_tag: str | None) -> Identifiers:
-        tag_readable = bool(normalized_tag) or bool(llm.tag_readable)
-        return Identifiers(
-            asset_tag_number=normalized_tag,
-            asset_tag_number_raw=llm.asset_tag_number,
-            tag_readable=tag_readable,
-            tag_position=llm.barcode_position,
-            tag_detection_reasoning=llm.tag_detection_reasoning,
-            visible_labels=_clean_list(llm.visible_labels),
         )
 
     @staticmethod

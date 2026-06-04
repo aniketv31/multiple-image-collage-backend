@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     max_image_size_mb: int = 15
     max_preprocess_edge_px: int = 2048
     gemini_analyze_temperature: float = 0.0
+    gemini_max_output_tokens: int = 8192
 
     # Detail vs cost lever (SDK supports low/medium/high; ultra_high not available -> clamps to high)
     media_resolution_collage: str = "high"

@@ -157,6 +157,8 @@ Must show **`0.0.0.0:8000`** LISTENING. If you only see **`127.0.0.1:8000`**, LA
 | `GET /v1/health` | Health check |
 | `GET /metrics` | Prometheus metrics |
 
+**Response schema:** field reference and dummy JSON (no base64) — [docs/response-schema.md](docs/response-schema.md), [collage example](docs/examples/collage-response-dummy.json), [multi example](docs/examples/multi-response-dummy.json).
+
 ### Swagger upload
 
 1. Open **/docs**

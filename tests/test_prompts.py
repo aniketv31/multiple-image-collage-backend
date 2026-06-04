@@ -21,6 +21,9 @@ def test_analysis_prompt_core_fields():
     assert "estimated_value_usd_min" in prompt
     assert "like_new_value_usd_min" in prompt
     assert "valuation_confidence" in prompt
+    assert "STICKERS (exhaustive" in prompt
+    assert "DAMAGE (exhaustive" in prompt
+    assert "NEVER merge multiple labels" in prompt
 
 
 def test_analysis_prompt_validator_framing():

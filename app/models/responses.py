@@ -34,6 +34,18 @@ class AssetDetails(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Placement (shared by damage, barcode, stickers)
+# --------------------------------------------------------------------------- #
+class PlacementInfo(BaseModel):
+    asset_location: Optional[str] = None
+    horizontal: Optional[str] = None
+    vertical: Optional[str] = None
+    seen_in_image: Optional[int] = None
+    in_frame_position: Optional[str] = None
+    description: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- #
 # Condition / damage
 # --------------------------------------------------------------------------- #
 class DamageItem(BaseModel):
@@ -44,6 +56,7 @@ class DamageItem(BaseModel):
     detail: Optional[str] = None
     affects_function: Optional[bool] = None
     repair_action: Optional[str] = None
+    placement: Optional[PlacementInfo] = None
 
 
 class DamageSeverityCounts(BaseModel):
@@ -76,6 +89,19 @@ class ConditionReport(BaseModel):
 # --------------------------------------------------------------------------- #
 # Identifiers (tags / labels / barcode)
 # --------------------------------------------------------------------------- #
+class BarcodeDetails(BaseModel):
+    present: bool = False
+    readable: bool = False
+    placement: Optional[PlacementInfo] = None
+    detection_reasoning: Optional[str] = None
+
+
+class StickerItem(BaseModel):
+    label_text: str
+    sticker_type: Optional[str] = None
+    placement: Optional[PlacementInfo] = None
+
+
 class Identifiers(BaseModel):
     asset_tag_number: Optional[str] = None
     asset_tag_number_raw: Optional[str] = None
@@ -83,6 +109,8 @@ class Identifiers(BaseModel):
     tag_position: Optional[str] = None
     tag_detection_reasoning: Optional[str] = None
     visible_labels: list[str] = Field(default_factory=list)
+    barcode: BarcodeDetails = Field(default_factory=BarcodeDetails)
+    stickers: list[StickerItem] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -185,9 +213,22 @@ class LLMDamageItem(BaseModel):
     type: Optional[str] = None
     severity: Optional[str] = None
     seen_in_image: Optional[int] = None
+    horizontal: Optional[str] = None
+    vertical: Optional[str] = None
+    in_frame_position: Optional[str] = None
     detail: Optional[str] = None
     affects_function: Optional[bool] = None
     repair_action: Optional[str] = None
+
+
+class LLMStickerItem(BaseModel):
+    label_text: Optional[str] = None
+    sticker_type: Optional[str] = None
+    asset_location: Optional[str] = None
+    horizontal: Optional[str] = None
+    vertical: Optional[str] = None
+    seen_in_image: Optional[int] = None
+    in_frame_position: Optional[str] = None
 
 
 class LLMAnalysisResult(BaseModel):
@@ -208,6 +249,21 @@ class LLMAnalysisResult(BaseModel):
     distinguishing_features: list[str] = Field(default_factory=list)
     description: Optional[str] = None
 
+    # Identifiers (before condition — less likely to be truncated)
+    asset_tag_number: Optional[str] = None
+    tag_readable: Optional[bool] = None
+    tag_detection_reasoning: Optional[str] = None
+    barcode_present: Optional[bool] = None
+    barcode_asset_location: Optional[str] = None
+    barcode_horizontal: Optional[str] = None
+    barcode_vertical: Optional[str] = None
+    barcode_seen_in_image: Optional[int] = None
+    barcode_in_frame_position: Optional[str] = None
+    barcode_position: Optional[str] = None
+    stickers: list[LLMStickerItem] = Field(default_factory=list)
+    visible_labels: list[str] = Field(default_factory=list)
+    damage_items: list[LLMDamageItem] = Field(default_factory=list)
+
     # Condition (detailed)
     condition_summary: Optional[str] = None
     condition_grade: Optional[str] = None
@@ -223,14 +279,6 @@ class LLMAnalysisResult(BaseModel):
     missing_parts: list[str] = Field(default_factory=list)
     functional_issues: list[str] = Field(default_factory=list)
     positive_aspects: list[str] = Field(default_factory=list)
-    damage_items: list[LLMDamageItem] = Field(default_factory=list)
-
-    # Identifiers
-    asset_tag_number: Optional[str] = None
-    tag_detection_reasoning: Optional[str] = None
-    barcode_position: Optional[str] = None
-    visible_labels: list[str] = Field(default_factory=list)
-    tag_readable: Optional[bool] = None
 
     # Confidence
     confidence_asset_name: float = 0.0

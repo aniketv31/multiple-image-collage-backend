@@ -39,6 +39,15 @@ def _clean_list(items: list[str] | None, limit: int = 25) -> list[str]:
     return seen
 
 
+def _normalize_estimated_age(value: str | None) -> str:
+    if value is None:
+        return "Unknown"
+    text = str(value).strip()
+    if not text or text.lower() in ("null", "none", "n/a", "na"):
+        return "Unknown"
+    return text
+
+
 def to_asset_details(result: LLMAnalysisResult, settings: Settings | None = None) -> AssetDetails:
     settings = settings or get_settings()
     quantity = result.quantity if isinstance(result.quantity, int) and result.quantity > 0 else 1
@@ -51,7 +60,7 @@ def to_asset_details(result: LLMAnalysisResult, settings: Settings | None = None
         color=result.color,
         material=result.material,
         estimated_dimensions=result.estimated_dimensions,
-        estimated_age=result.estimated_age,
+        estimated_age=_normalize_estimated_age(result.estimated_age),
         quantity=quantity,
         serial_number=result.serial_number,
         asset_tag_number=normalize_tag_number(result.asset_tag_number, settings),

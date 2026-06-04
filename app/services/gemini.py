@@ -19,12 +19,9 @@ _MEDIA_RESOLUTION_MAP = {
     "low": "MEDIA_RESOLUTION_LOW",
     "medium": "MEDIA_RESOLUTION_MEDIUM",
     "high": "MEDIA_RESOLUTION_HIGH",
-    # ultra_high is not settable globally in this SDK; clamp to the highest supported.
     "ultra_high": "MEDIA_RESOLUTION_HIGH",
 }
 
-# Official Gemini 3 token budget per input image, by media_resolution.
-# https://ai.google.dev/gemini-api/docs/media-resolution
 MEDIA_RESOLUTION_IMAGE_TOKENS = {
     "low": 280,
     "medium": 560,
@@ -40,6 +37,27 @@ def _resolve_media_resolution(name: str) -> str:
 
 def _per_image_token_budget(name: str) -> int:
     return MEDIA_RESOLUTION_IMAGE_TOKENS.get((name or "high").strip().lower(), 1120)
+
+
+def _build_image_parts(
+    images: list[Image.Image],
+    prompt: str,
+    image_labels: list[str] | None = None,
+) -> list[types.Part]:
+    parts: list[types.Part] = [types.Part.from_text(text=prompt)]
+    n = len(images)
+    for i, img in enumerate(images):
+        if n > 1:
+            label = (
+                image_labels[i]
+                if image_labels and i < len(image_labels)
+                else f"Image {i + 1}"
+            )
+            parts.append(types.Part.from_text(text=f"--- {label} ({i + 1} of {n}) ---"))
+        parts.append(
+            types.Part.from_bytes(data=image_to_bytes(img), mime_type="image/jpeg")
+        )
+    return parts
 
 
 class GeminiService:
@@ -61,6 +79,7 @@ class GeminiService:
         images: list[Image.Image],
         media_resolution: str,
         locale: str = "en",
+        image_labels: list[str] | None = None,
     ) -> tuple[LLMAnalysisResult, TokenUsage]:
         if not self.is_configured():
             raise RuntimeError("Gemini API key is not configured")
@@ -68,19 +87,21 @@ class GeminiService:
             raise ValueError("At least one image is required")
 
         prompt = get_analysis_prompt()
+        if len(images) > 1:
+            prompt += (
+                f"\n\nThis request has {len(images)} images numbered 1 through {len(images)}. "
+                "Use those indices for barcode_seen_in_image, stickers[].seen_in_image, "
+                "and damage_items[].seen_in_image."
+            )
         if locale != "en":
             prompt += f"\n\nRespond in locale: {locale}."
 
-        parts: list[types.Part] = [types.Part.from_text(text=prompt)]
-        for img in images:
-            parts.append(
-                types.Part.from_bytes(data=image_to_bytes(img), mime_type="image/jpeg")
-            )
-
+        parts = _build_image_parts(images, prompt, image_labels)
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=LLMAnalysisResult,
             temperature=self.settings.gemini_analyze_temperature,
+            max_output_tokens=self.settings.gemini_max_output_tokens,
             media_resolution=_resolve_media_resolution(media_resolution),
         )
         return await self._generate(
@@ -144,7 +165,6 @@ def _extract_usage(
     per_image = _per_image_token_budget(media_resolution)
     estimated_image_tokens = images_sent * per_image
 
-    # Actual image tokens from the API's per-modality breakdown, when available.
     details = getattr(um, "prompt_tokens_details", None) or []
     actual_image_tokens = 0
     has_details = False
@@ -158,10 +178,8 @@ def _extract_usage(
     if has_details:
         image_tokens = actual_image_tokens
     else:
-        # No breakdown from the API: fall back to the official per-resolution estimate.
         image_tokens = estimated_image_tokens
 
-    # Reconcile so image_tokens + text_tokens always equals input_tokens.
     image_tokens = max(0, min(image_tokens, input_tokens))
     text_tokens = max(0, input_tokens - image_tokens)
 

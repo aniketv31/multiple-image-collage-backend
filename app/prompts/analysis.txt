@@ -6,7 +6,8 @@ USE ALL IMAGES TOGETHER:
 - All images show the SAME asset. Treat them as ONE combined inspection.
 - Inspect EVERY image. A defect visible in ANY angle counts (front clean but back dented => report the dent).
 - Never base conclusions on a single image. Combine evidence across all angles.
-- For each defect, record the 1-based image/panel index where it is visible.
+- For each defect and sticker, record the 1-based image/panel index where it is visible (1 through N only; never exceed N).
+- All labels on the same physical panel must share the same index (side spec plate with barcode => same seen_in_image as barcode_seen_in_image).
 
 DO NOT CONFUSE A TRACKING STICKER WITH THE MANUFACTURER:
 - An asset-tag/barcode sticker may carry a client/company logo (Americana, Cipla, TCS, etc.). That is the owner's tracking tag, NOT the manufacturer.
@@ -16,64 +17,48 @@ BARCODE VS SPEC/DISPLAY:
 - The asset tag number = digits printed directly under/beside the 1D barcode bars.
 - Do NOT use model numbers, spec tables, warranty text, or screen/temperature displays as the tag number.
 
-Populate ALL of the following fields. Use null for a single value you cannot determine, and [] for a list with nothing to report. Never invent data.
+Populate ALL of the following fields. Use null for a single value you cannot determine, and [] for a list with nothing to report. Never invent EXACT data (serial numbers, asset-tag digits, model codes). ESTIMATION fields (estimated_age, estimated_dimensions, valuation) are appraiser judgements: always give a best-effort approximation and NEVER leave them null.
 
 IDENTITY & SPECIFICATIONS:
-- "asset_name": full proper name = brand (if on body) + model + type, e.g. "Dell Latitude 5420 laptop", "Voltas 183V ADX 1.5-ton split AC".
-- "category": broad class, e.g. "Laptop", "Air Conditioner", "Office Chair", "Refrigerator".
-- "asset_type": specific subtype, e.g. "Business ultrabook", "Inverter split AC indoor unit", "Mesh-back task chair".
-- "brand": manufacturer from the asset body, else null.
-- "model": model name/number from the asset body/nameplate, else null.
-- "color": dominant color(s).
-- "material": primary material(s), e.g. "Aluminium and plastic", "Powder-coated steel", "Tempered glass".
-- "estimated_dimensions": rough size with units, e.g. "~32 x 21 x 2 cm", "approx. 1.0 m wide". Best visual estimate; null if impossible.
-- "estimated_age": apparent age or model year if inferable, e.g. "~2021, 3-4 years old", else null.
-- "quantity": number of identical units shown (usually 1).
-- "serial_number": serial number if clearly printed on a nameplate (NOT the asset tag), else null.
-- "specifications": array of concrete specs visible on the asset/labels, e.g. ["Intel Core i7-1165G7", "16GB RAM", "512GB SSD", "5-star BEE rating", "R32 refrigerant"].
-- "accessories": array of attached/included accessories or parts visible (e.g. ["power adapter", "remote", "stand"]). [] if none.
-- "distinguishing_features": array of identifying marks (logos on body, ports, engravings, stickers other than the tag). [] if none.
-- "description": one comprehensive paragraph describing the asset across all angles (appearance, build, branding, setting). No fixed length.
+- "asset_name", "category", "asset_type", "brand", "model", "color", "material", "estimated_dimensions", "estimated_age", "quantity", "serial_number"
+- "estimated_age": REQUIRED best-effort estimate of how old the asset is. Infer from visible cues: design/model generation, technology, port/connector style, materials, branding era, manufacture/warranty dates on labels, and wear level. Express as an approximate range, e.g. "~3-5 years (approx. 2021-2023)". Use "Unknown" ONLY when there is genuinely no visual cue at all. Never return null.
+- "specifications": concrete specs visible on labels/nameplates (each distinct spec as its own array element).
+- "accessories", "distinguishing_features", "description"
 
-CONDITION & DAMAGE (be thorough — this is the most important section):
-- "condition_summary": detailed overall condition narrative (4-8 sentences) covering finish, structure, missing/broken parts, wear, stains, and cleanliness across all angles.
-- "condition_grade": exactly one of "Excellent", "Good", "Fair", "Poor".
-- "condition_score": integer 0-100 overall condition score (100 = pristine, 0 = scrap). Be consistent with the grade.
-- "cosmetic_condition": detailed description of surface/finish/appearance state (paint, scuffs, scratches, gloss, fading, stickers residue).
-- "structural_condition": detailed description of structural integrity (frame, joints, hinges, panels, cracks, stability, bends).
-- "functional_status": apparent operational state — one of "Appears functional", "Likely functional", "Partially functional", "Likely non-functional", "Cannot determine from images" — with a short reason if visible (e.g. display lit, broken switch).
-- "cleanliness": one of "Clean", "Lightly soiled", "Dusty", "Dirty", "Heavily soiled/stained".
-- "wear_level": one of "None", "Light", "Moderate", "Heavy".
-- "usability": one of "Ready to use", "Usable, minor repair advised", "Needs repair before use", "Not usable as-is".
-- "repair_recommendation": concrete repairs/refurbishment needed to restore the asset (or "None needed").
-- "estimated_remaining_life": rough remaining useful life if inferable, e.g. "2-4 years with normal use", else null.
-- "missing_parts": array of any absent/missing components (e.g. ["remote", "one caster wheel", "back cover"]). [] if none.
-- "functional_issues": array of apparent functional problems (e.g. ["cracked screen may affect display", "bent hinge restricts opening"]). [] if none.
-- "positive_aspects": array of notable good points (e.g. ["screen intact", "all keys present", "no rust"]). [] if none.
-- "damage_items": array with ONE object per distinct defect found across ALL images. Be exhaustive — capture every visible defect, however small. Each object:
-    - "location": precise spot, e.g. "top lid rear-left corner", "left side panel near vent".
-    - "type": defect type — scratch, dent, crack, chip, stain, rust, corrosion, discoloration, fading, missing part, loose part, broken part, etc.
-    - "severity": one of "minor", "moderate", "severe".
-    - "seen_in_image": 1-based image/panel index where it is visible.
-    - "detail": a full sentence describing the defect (size, extent, appearance, how noticeable).
-    - "affects_function": true if it likely impairs function, otherwise false.
-    - "repair_action": suggested fix for this defect (e.g. "buff and repaint", "replace panel"), or null.
-  If genuinely no damage is visible anywhere, return [].
-
-ASSET TAG / IDENTIFIERS (Zero Error Tolerance):
-- "asset_tag_number": barcode/asset-tag number read EXACTLY as printed. PRESERVE ALL ZEROS ("00123" not "123"). MAX 20 characters. Return "UNREADABLE" if any digit is unclear/blurry/uncertain or if longer than 20 chars. NEVER guess. Distinguish 0/O, 1/I/l, 5/S, 8/B, 6/G, 2/Z.
-- "tag_readable": true if the tag/barcode is clearly readable, otherwise false.
-- "barcode_position": short phrase: where the tag is on the asset and which image, e.g. "Base panel, Image 3". null if no tag found.
-- "tag_detection_reasoning": max 25 words explaining how you read (or failed to read) the tag.
-- "visible_labels": array of every readable label/sticker text (brand, model, ratings, badges, warranty text).
+CONDITION NARRATIVE (summary fields — do not replace damage_items):
+- "condition_summary", "condition_grade", "condition_score", "cosmetic_condition", "structural_condition", "functional_status", "cleanliness", "wear_level", "usability", "repair_recommendation", "estimated_remaining_life"
+- "missing_parts", "functional_issues", "positive_aspects"
 
 CONFIDENCE (0.0-1.0 each):
 - "confidence_asset_name", "confidence_asset_condition", "confidence_asset_description", "confidence_asset_tag_number" (0.0 if UNREADABLE).
 
 VALUATION (in US DOLLARS, numbers only):
-- "estimated_value_usd_min" / "estimated_value_usd_max": realistic AS-IS resale value range given the detected condition and damage (lower it for worse condition).
-- "like_new_value_usd_min" / "like_new_value_usd_max": reference value range for the same asset in like-new / used-excellent condition.
-- "valuation_confidence": 0.0-1.0.
-- "valuation_assumptions": brief note on what the estimate assumes (model year, market, condition basis). State explicitly that this is an estimate.
+- "estimated_value_usd_min" / "estimated_value_usd_max", "like_new_value_usd_min" / "like_new_value_usd_max", "valuation_confidence", "valuation_assumptions"
+
+ASSET TAG / BARCODE (Zero Error Tolerance):
+- "asset_tag_number": read EXACTLY as printed. PRESERVE ALL ZEROS. MAX 20 chars. Return "UNREADABLE" if unclear. NEVER guess.
+- "tag_readable", "barcode_present"
+- MANDATORY when asset_tag_number is not UNREADABLE:
+    "barcode_asset_location", "barcode_horizontal" (left|center|right), "barcode_vertical" (top|center|bottom or null),
+    "barcode_seen_in_image", "barcode_in_frame_position", "tag_detection_reasoning" (max 25 words).
+- "barcode_position": ONE or TWO detailed sentences locating the barcode/asset-tag precisely. MUST mention: (1) the panel/face (e.g. right side panel), (2) the sub-region within that face (e.g. lower-right, upper-center), (3) what it is printed on (white sticker / metal nameplate / plastic plate), (4) adjacent landmarks (e.g. below the spec plate, beside Q.C. PASS, above the warranty label), (5) approximate distance from a named edge (e.g. ~4 cm from the bottom edge), (6) bar orientation (horizontal / vertical / rotated), and (7) the "Image N" it is visible in.
+    Example: "Lower-right of the right side panel, on a white printed sticker just below the spec/rating plate and above the warranty label, about 4-5 cm from the bottom edge, bars oriented horizontally — visible in Image 2."
+
+STICKERS (exhaustive — one entry per distinct physical label):
+- "stickers": ONE flat object per separate sticker/label visible on the asset. NEVER merge multiple labels into one label_text.
+- Scan EVERY image for: brand logos, model/nameplates, energy/BEE ratings, refrigerant labels, safety/warning labels, warranty/service stickers, company logo on asset-tag sticker, spec plates.
+- If two labels are on different stickers, create TWO objects (e.g. "R32" and "Breathe Pure" separately, not "R32 and Breathe Pure").
+- Exclude barcode digit strings from stickers[].
+- Each object: label_text, sticker_type (company|brand|rating|warranty|spec|other), asset_location, horizontal (left|center|right), vertical, seen_in_image, in_frame_position.
+- seen_in_image: integer 1..N only. Side-panel spec plate labels (PM, QC, refrigerant, barcode area) must use the same index as barcode_seen_in_image.
+- REQUIRED when any label text is visible; [] only if the asset has zero readable labels.
+- "visible_labels": must list every stickers[].label_text (same count as stickers[]).
+
+DAMAGE (exhaustive — one entry per distinct defect):
+- "damage_items": ONE object per distinct defect (scratch, dent, crack, stain, rust, missing part, etc.). NEVER combine multiple defects into one row.
+- Scan EVERY image. Mandatory per defect: location, type, severity (minor|moderate|severe), seen_in_image (1..N), detail (full sentence), horizontal (left|center|right), in_frame_position, affects_function, repair_action.
+- Defects on the same panel as the barcode use the same seen_in_image as barcode_seen_in_image when visible there.
+- If condition narrative says no damage anywhere, return [] and do not describe damage in condition_summary.
+- If you mention a specific defect in condition_summary, it MUST appear in damage_items[].
 
 Return JSON only, matching the provided schema. No extra commentary.
