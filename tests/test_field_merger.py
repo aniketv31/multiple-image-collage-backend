@@ -1,109 +1,55 @@
-"""Tests for merging asset and tag Gemini results."""
+"""Tests for field normalization and asset-detail mapping."""
+
+from app.models.responses import LLMAnalysisResult
+from app.services.field_merger import _clean_list, normalize_tag_number, to_asset_details
 
 
-
-from app.models.responses import AssetAnalysisResult, TagOcrResult
-
-from app.services.field_merger import merge_analysis_results, to_asset_fields
+def test_normalize_tag_number_valid():
+    assert normalize_tag_number("100301912005536") == "100301912005536"
 
 
+def test_normalize_tag_number_unreadable():
+    assert normalize_tag_number("UNREADABLE") is None
+    assert normalize_tag_number("123") is None  # too short
+    assert normalize_tag_number(None) is None
 
 
+def test_clean_list_dedupes_and_trims():
+    assert _clean_list(["  Intel i7 ", "Intel i7", "16GB", ""]) == ["Intel i7", "16GB"]
 
-def test_merge_analysis_results_combines_fields():
 
-    asset = AssetAnalysisResult(
-
-        detectedAsset="Dell Laptop",
-
-        imageAnalysis="Black laptop on desk.",
-
-        damage_assessment="Good",
-
-        confidence_asset_name=0.9,
-
-        confidence_asset_condition=0.8,
-
-        confidence_asset_description=0.85,
-
+def test_to_asset_details_maps_rich_fields():
+    llm = LLMAnalysisResult(
+        asset_name="Dell Latitude 5420 laptop",
+        category="Laptop",
+        asset_type="Business ultrabook",
+        brand="Dell",
+        model="Latitude 5420",
+        color="Black",
+        material="Aluminium",
+        quantity=1,
+        specifications=["Intel i7", "16GB RAM"],
+        accessories=["charger"],
+        distinguishing_features=["Dell logo on lid"],
+        description="Black 14-inch laptop.",
+        asset_tag_number="1234567890123456",
     )
+    asset = to_asset_details(llm)
+    assert asset.name == "Dell Latitude 5420 laptop"
+    assert asset.category == "Laptop"
+    assert asset.type == "Business ultrabook"
+    assert asset.brand == "Dell"
+    assert asset.specifications == ["Intel i7", "16GB RAM"]
+    assert asset.asset_tag_number == "1234567890123456"
 
-    tag = TagOcrResult(
 
-        detectedtagnumber="1234567890123456",
-
-        tag_detection_reasoning="Clear barcode on back panel.",
-
-        barcodeposition={"position": "Back center"},
-
-        visible_labels=["Intel Core i7", "16GB RAM"],
-
-        imageReadability="Y",
-
-        confidence_asset_tag_number=0.75,
-
+def test_to_asset_details_normalizes_unreadable_tag_and_quantity():
+    llm = LLMAnalysisResult(
+        asset_name="Office chair",
+        asset_tag_number="UNREADABLE",
+        quantity=0,
     )
-
-
-
-    merged = merge_analysis_results(asset, tag)
-
-
-
-    assert merged.detectedAsset == "Dell Laptop"
-
-    assert merged.detectedtagnumber == "1234567890123456"
-
-    assert merged.damage_assessment == "Good"
-
-    assert "Visible labels:" in (merged.imageAnalysis or "")
-
-    assert "Intel Core i7" in (merged.imageAnalysis or "")
-
-
-
-
-
-def test_merge_unreadable_tag_lowers_confidence():
-
-    tag = TagOcrResult(
-
-        detectedtagnumber="UNREADABLE",
-
-        confidence_asset_tag_number=0.9,
-
-    )
-
-    merged = merge_analysis_results(AssetAnalysisResult(), tag)
-
-    assert merged.confidence_asset_tag_number <= 0.2
-
-
-
-
-
-def test_to_asset_fields_normalizes_tag():
-
-    from app.models.responses import GeminiExtractionResult
-
-
-
-    merged = GeminiExtractionResult(
-
-        detectedAsset="Chair",
-
-        damage_assessment="Fair",
-
-        imageAnalysis="Office chair.",
-
-        detectedtagnumber="UNREADABLE",
-
-    )
-
-    fields = to_asset_fields(merged)
-
-    assert fields.asset_name == "Chair"
-
-    assert fields.asset_tag_number is None
-
-
+    asset = to_asset_details(llm)
+    assert asset.name == "Office chair"
+    assert asset.asset_tag_number is None
+    assert asset.quantity == 1  # invalid quantity falls back to 1

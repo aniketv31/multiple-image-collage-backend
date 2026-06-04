@@ -5,22 +5,27 @@ from app.prompts.loader import get_analysis_prompt
 
 def test_analysis_prompt_core_fields():
     prompt = get_analysis_prompt()
-    assert "ONE photograph" in prompt
-    assert "detectedtagnumber" in prompt
-    assert "detectedAsset" in prompt
-    assert "damage_assessment" in prompt
-    assert "visible_labels" in prompt
-    assert "TAG ZOOM" not in prompt
+    assert "ONE OR MORE photographs" in prompt
+    assert "USE ALL IMAGES TOGETHER" in prompt
+    assert "asset_name" in prompt
+    assert "specifications" in prompt
+    assert "accessories" in prompt
+    assert "damage_items" in prompt
+    assert "condition_grade" in prompt
+    assert "condition_score" in prompt
+    assert "cosmetic_condition" in prompt
+    assert "structural_condition" in prompt
+    assert "functional_status" in prompt
+    assert "repair_recommendation" in prompt
+    assert "asset_tag_number" in prompt
+    assert "estimated_value_usd_min" in prompt
+    assert "like_new_value_usd_min" in prompt
+    assert "valuation_confidence" in prompt
 
 
-def test_analysis_prompt_with_validation():
-    prompt = get_analysis_prompt("Dell Laptop", "Office laptop")
-    assert "Dell Laptop" in prompt
-    assert "namedescriptionmatch" in prompt
-    assert "VALIDATION" in prompt
-
-
-def test_analysis_prompt_without_validation():
-    prompt = get_analysis_prompt(None, None)
-    assert "ONE photograph" in prompt
-    assert "User's Asset Name" not in prompt
+def test_analysis_prompt_validator_framing():
+    prompt = get_analysis_prompt()
+    assert "asset validator" in prompt.lower()
+    # Must work whether images arrive separately or as a collage.
+    assert "separate images" in prompt
+    assert "collage" in prompt

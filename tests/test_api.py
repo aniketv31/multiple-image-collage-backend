@@ -1,6 +1,5 @@
-"""API integration tests."""
+"""API integration tests for the two analysis endpoints."""
 
-import base64
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,111 +7,195 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.models.responses import CompositeAnalysisResult
+from app.models.responses import LLMAnalysisResult, TokenUsage
+from app.services.fx import FxResult
 from tests.conftest import make_test_image
 
 
 @pytest.fixture
 def client():
-    app = create_app()
-    return TestClient(app)
+    return TestClient(create_app())
+
+
+def _mock_llm() -> LLMAnalysisResult:
+    return LLMAnalysisResult(
+        asset_name="Dell Latitude 5420 laptop",
+        category="Laptop",
+        asset_type="Business ultrabook",
+        brand="Dell",
+        model="Latitude 5420",
+        color="Black",
+        material="Aluminium and plastic",
+        estimated_dimensions="~32 x 21 x 2 cm",
+        estimated_age="~2021, 3-4 years",
+        quantity=1,
+        specifications=["Intel Core i7", "16GB RAM"],
+        accessories=["power adapter"],
+        distinguishing_features=["Dell logo on lid"],
+        description="Black 14-inch business laptop, aluminium lid.",
+        condition_summary="Fair. Scuffs on lid, scratch on palm rest.",
+        condition_grade="Fair",
+        condition_score=62,
+        cosmetic_condition="Visible scuffs on the lid; palm rest lightly scratched.",
+        structural_condition="Frame solid, hinges firm, no cracks.",
+        functional_status="Appears functional",
+        cleanliness="Lightly soiled",
+        wear_level="Moderate",
+        usability="Usable, minor repair advised",
+        repair_recommendation="Buff lid, clean chassis.",
+        estimated_remaining_life="2-4 years with normal use",
+        missing_parts=[],
+        functional_issues=["bent hinge restricts opening"],
+        positive_aspects=["screen intact", "all keys present"],
+        damage_items=[
+            {
+                "location": "Top lid rear-left",
+                "type": "dent",
+                "severity": "moderate",
+                "seen_in_image": 2,
+                "detail": "A ~1cm dent on the rear-left corner of the lid.",
+                "affects_function": False,
+                "repair_action": "Reshape or replace lid panel.",
+            },
+            {"location": "Palm rest", "type": "scratch", "severity": "minor", "seen_in_image": 1},
+        ],
+        asset_tag_number="1234567890123456",
+        tag_detection_reasoning="Tag on base, Image 3. 16 digits.",
+        barcode_position="Base panel, Image 3",
+        visible_labels=["Dell", "Latitude 5420"],
+        tag_readable=True,
+        confidence_asset_name=0.9,
+        confidence_asset_condition=0.8,
+        confidence_asset_description=0.85,
+        confidence_asset_tag_number=0.7,
+        estimated_value_usd_min=120,
+        estimated_value_usd_max=180,
+        like_new_value_usd_min=260,
+        like_new_value_usd_max=320,
+        valuation_confidence=0.45,
+        valuation_assumptions="2021 model, used, moderate wear.",
+    )
 
 
 def test_health_endpoint(client):
     response = client.get("/v1/health")
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "ok"
-    assert "gemini_configured" in data
+    assert response.json()["status"] == "ok"
 
 
 def test_analyze_requires_image(client):
-    app = create_app()
-    test_client = TestClient(app)
-    response = test_client.post("/v1/assets/analyze", data={})
-    assert response.status_code == 400
-    assert "image_base64" in response.json()["detail"]
+    response = client.post("/v1/assets/analyze/multi", data={})
+    assert response.status_code in (400, 422)
 
 
-def test_analyze_success_mocked(client):
+@pytest.mark.parametrize(
+    "path,method",
+    [
+        ("/v1/assets/analyze/collage", "collage"),
+        ("/v1/assets/analyze/multi", "multi_image"),
+    ],
+)
+def test_analyze_success_mocked(path, method):
     settings = Settings(gemini_api_key="fake-key")
-    mock_result = CompositeAnalysisResult(
-        imageAnalysis="Blue industrial equipment with minor wear visible.",
-        detectedAsset="Test Asset",
-        damage_assessment="Good condition with minor cosmetic wear.",
-        detectedtagnumber="1234567890123456",
-        imageReadability="Y",
-        tag_detection_reasoning="Single photo. Rotated 0°. Counted 6 digits. High confidence.",
-        barcodeposition={"position": "Front panel, center-right"},
-        visible_labels=["R32 Eco-Friendly"],
-        confidence_asset_name=0.9,
-        confidence_asset_condition=0.8,
-        confidence_asset_description=0.85,
-        confidence_asset_tag_number=0.7,
+    usage = TokenUsage(
+        input_tokens=8000,
+        output_tokens=2000,
+        total_tokens=10000,
+        image_tokens=6720,
+        text_tokens=1280,
+        images_sent_to_gemini=3,
+        per_image_token_budget=1120,
+        estimated_image_tokens=3360,
     )
+    fx = FxResult(rate=100.0, source="fixed_rate", is_fallback=False, as_of=None)
 
     with (
         patch("app.api.v1.assets.get_settings", return_value=settings),
         patch(
-            "app.services.gemini.GeminiService.extract_from_image",
-            new=AsyncMock(return_value=mock_result),
-        ) as mock_extract,
+            "app.services.gemini.GeminiService.analyze_images",
+            new=AsyncMock(return_value=(_mock_llm(), usage)),
+        ) as mock_analyze,
+        patch("app.services.analyzer.get_usd_to_inr", new=AsyncMock(return_value=fx)),
     ):
-        app = create_app()
-        test_client = TestClient(app)
-        img = make_test_image((90, 120, 150))
-        response = test_client.post(
-            "/v1/assets/analyze",
-            files=[("image", ("photo.jpg", img, "image/jpeg"))],
-        )
+        client = TestClient(create_app())
+        imgs = [make_test_image((i * 20, 60, 120)) for i in range(3)]
+        files = [("images", (f"img{i}.jpg", img, "image/jpeg")) for i, img in enumerate(imgs)]
+        response = client.post(path, files=files)
 
-    assert response.status_code == 200
-    mock_extract.assert_awaited_once()
+    assert response.status_code == 200, response.text
+    mock_analyze.assert_awaited_once()
     data = response.json()
+
     assert data["status"] == "success"
-    assert data["asset"]["asset_name"] == "Test Asset"
-    assert data["unified_view"]["method"] == "direct_image"
-    assert "image_base64" not in data["unified_view"]
-    assert "image_url" not in data["unified_view"]
-    assert "confidence" not in data
-    assert "quality_warnings" not in data
-    assert "review_required" not in data
-    assert "tag_zoom_source_label" not in data
-    assert data["image_readability"] == "Y"
-    assert data["detected_tag_number_raw"] == "1234567890123456"
-    assert data["asset"]["asset_tag_number"] == "1234567890123456"
-    assert "analysis_sources" not in data
-    assert data["visible_labels"] == ["R32 Eco-Friendly"]
+    assert data["analysis_method"] == method
+    assert data["images_analyzed"] == 3
 
+    # collage endpoint returns the merged image as a base64 data URL (first field);
+    # multi endpoint has no collage.
+    if method == "collage":
+        assert list(data.keys())[0] == "collage_base64"
+        assert data["collage_base64"].startswith("data:image/jpeg;base64,")
+    else:
+        assert data["collage_base64"] is None
 
-def test_analyze_success_base64_mocked(client):
-    settings = Settings(gemini_api_key="fake-key")
-    mock_result = CompositeAnalysisResult(
-        detectedAsset="Base64 Asset",
-        imageReadability="Y",
-        confidence_asset_name=0.8,
-        confidence_asset_condition=0.8,
-        confidence_asset_description=0.8,
-        confidence_asset_tag_number=0.8,
+    asset = data["asset"]
+    assert asset["name"] == "Dell Latitude 5420 laptop"
+    assert asset["category"] == "Laptop"
+    assert asset["brand"] == "Dell"
+    assert asset["specifications"] == ["Intel Core i7", "16GB RAM"]
+    assert asset["accessories"] == ["power adapter"]
+    assert asset["asset_tag_number"] == "1234567890123456"
+    assert asset["quantity"] == 1
+
+    cond = data["condition"]
+    assert cond["grade"] == "Fair"
+    assert cond["overall_score"] == 62
+    assert cond["functional_status"] == "Appears functional"
+    assert cond["cosmetic_condition"]
+    assert cond["structural_condition"]
+    assert cond["cleanliness"] == "Lightly soiled"
+    assert cond["wear_level"] == "Moderate"
+    assert cond["usability"] == "Usable, minor repair advised"
+    assert cond["repair_recommendation"]
+    assert cond["estimated_remaining_life"] == "2-4 years with normal use"
+    assert cond["functional_issues"] == ["bent hinge restricts opening"]
+    assert cond["positive_aspects"] == ["screen intact", "all keys present"]
+    assert cond["has_damage"] is True
+    assert cond["damage_count"] == 2
+    assert cond["damage_by_severity"] == {"minor": 1, "moderate": 1, "severe": 0}
+    assert cond["damage_items"][0]["severity"] == "moderate"
+    assert cond["damage_items"][0]["detail"]
+    assert cond["damage_items"][0]["affects_function"] is False
+    assert cond["damage_items"][0]["repair_action"] == "Reshape or replace lid panel."
+
+    ids = data["identifiers"]
+    assert ids["asset_tag_number"] == "1234567890123456"
+    assert ids["asset_tag_number_raw"] == "1234567890123456"
+    assert ids["tag_readable"] is True
+    assert ids["visible_labels"] == ["Dell", "Latitude 5420"]
+
+    val = data["valuation"]
+    assert val["as_is"]["usd"]["min"] == 120
+    assert val["as_is"]["inr"]["min"] == round(120 * 100.0, 2)
+    assert val["like_new_reference"]["usd"]["max"] == 320
+    assert val["confidence"] == 0.45
+
+    conf = data["confidence"]
+    assert conf["asset_name"] == 0.9
+    assert conf["overall"] == round((0.9 + 0.8 + 0.85 + 0.7) / 4, 3)
+
+    usage_out = data["token_usage"]
+    assert usage_out["input_tokens"] == 8000
+    assert usage_out["image_tokens"] == 6720
+    assert usage_out["text_tokens"] == 1280
+    assert usage_out["image_tokens"] + usage_out["text_tokens"] == usage_out["input_tokens"]
+    assert usage_out["per_image_token_budget"] == 1120
+
+    cost = data["cost"]
+    assert cost["model"] == settings.gemini_model
+    assert cost["usd_to_inr"] == 100.0
+    assert cost["total_cost_usd"] == pytest.approx(
+        8000 / 1e6 * 0.25 + 2000 / 1e6 * 1.50, rel=1e-6
     )
-
-    img = make_test_image((10, 20, 30))
-    b64 = base64.b64encode(img).decode("ascii")
-
-    with (
-        patch("app.api.v1.assets.get_settings", return_value=settings),
-        patch(
-            "app.services.gemini.GeminiService.extract_from_image",
-            new=AsyncMock(return_value=mock_result),
-        ) as mock_extract,
-    ):
-        app = create_app()
-        test_client = TestClient(app)
-        response = test_client.post(
-            "/v1/assets/analyze",
-            data={"image_base64": f"data:image/jpeg;base64,{b64}"},
-        )
-
-    assert response.status_code == 200
-    mock_extract.assert_awaited_once()
-    assert response.json()["asset"]["asset_name"] == "Base64 Asset"
+    assert cost["total_cost_inr"] == pytest.approx(cost["total_cost_usd"] * 100.0, rel=1e-6)
+    assert cost["fx_source"] == "fixed_rate"

@@ -60,7 +60,8 @@ def create_app() -> FastAPI:
             "lan_ipv4_all": all_ips,
             "lan_base_url": lan_base,
             "lan_docs": f"{lan_base}/docs" if lan_base else None,
-            "lan_analyze": f"{lan_base}/v1/assets/analyze" if lan_base else None,
+            "lan_analyze_collage": f"{lan_base}/v1/assets/analyze/collage" if lan_base else None,
+            "lan_analyze_multi": f"{lan_base}/v1/assets/analyze/multi" if lan_base else None,
             "start_command": "python serve.py",
             "ui_api_base_example": lan_base or f"http://<your-pc-ip>:{port}",
         }

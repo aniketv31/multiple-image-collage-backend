@@ -7,7 +7,7 @@ from PIL import Image, ImageOps
 
 from app.config import Settings
 from app.models.pipeline import ProcessedImage
-from app.pipeline.quality import score_blur, score_image_quality
+from app.pipeline.quality import score_blur
 
 
 def _resize_pil(image: Image.Image, max_edge: int) -> Image.Image:
@@ -22,11 +22,10 @@ def _resize_pil(image: Image.Image, max_edge: int) -> Image.Image:
 def preprocess_single_image(
     file: tuple[BinaryIO, str, bytes],
     settings: Settings,
-) -> tuple[ProcessedImage, list[str]]:
-    """Load and preprocess one uploaded image for Gemini."""
+    index: int = 0,
+) -> ProcessedImage:
+    """Load and preprocess one uploaded image (EXIF fix, RGB, resize)."""
     _file_obj, filename, raw_bytes = file
-    warnings: list[str] = []
-
     try:
         pil = Image.open(io.BytesIO(raw_bytes))
         pil = ImageOps.exif_transpose(pil)
@@ -37,19 +36,23 @@ def preprocess_single_image(
     pil = _resize_pil(pil, settings.max_preprocess_edge_px)
     blur = score_blur(pil)
 
+    warnings: list[str] = []
     if blur < 50:
-        warnings.append("image_blurry")
+        warnings.append(f"image_{index + 1}_blurry")
 
-    processed = ProcessedImage(
-        index=0,
-        label="Photo",
+    return ProcessedImage(
+        index=index,
+        label=f"Image {index + 1}",
         original_bytes=raw_bytes,
         pil_image=pil,
         blur_score=blur,
-        quality_warnings=list(warnings),
+        quality_warnings=warnings,
     )
-    return processed, warnings
 
 
-def compute_quality_score(image: ProcessedImage) -> float:
-    return score_image_quality(image.blur_score)
+def preprocess_images(
+    files: list[tuple[BinaryIO, str, bytes]],
+    settings: Settings,
+) -> list[ProcessedImage]:
+    """Preprocess a list of uploaded images."""
+    return [preprocess_single_image(f, settings, idx) for idx, f in enumerate(files)]

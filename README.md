@@ -2,13 +2,24 @@
 
 Backend for asset validation (`multiple-image-validation-backend`).
 
-Production-ready FastAPI service that accepts **one** image of a physical asset, applies light preprocessing (EXIF, resize), and extracts structured metadata via a single Google Gemini call.
+Production-ready FastAPI service that accepts **1–10 photos** of the same physical asset (different angles) and returns exhaustive damage analysis, an asset valuation range, and **token usage + cost** via a single Google Gemini call (`gemini-3.1-flash-lite`).
+
+## Two autopilot endpoints
+
+Both take the same input (1–10 image files) and return the same schema. Upload images, get the full analysis — no separate conversion step.
+
+| Endpoint | How it sends to Gemini | media_resolution | Detail vs cost |
+|---|---|---|---|
+| `POST /v1/assets/analyze/collage` | merges images into **one labeled collage** → 1 image | `high` | cheaper, less per-angle detail |
+| `POST /v1/assets/analyze/multi` | sends **each image as a separate part** in one call | `high` per image | best per-angle detail |
 
 ## Features
 
-- **Direct image analysis**: One photo preprocessed and sent to Gemini (no server-side collage or TAG ZOOM)
-- **Single Gemini call**: Asset understanding and tag/barcode OCR in one request
-- **Async endpoint**: Optional job-based analysis at `POST /v1/assets/analyze/async`
+- **All-angles analysis**: every image is inspected; damage in any angle is reported with its image index
+- **Exhaustive damage list**: `damage_items[]` with location, type, severity, and `seen_in_image`
+- **Valuation**: as-is range + like-new reference + confidence + disclaimer (₹ and $)
+- **Token usage + cost**: `token_usage` and `cost` (USD + INR) from Gemini `usage_metadata`
+- **Live FX**: USD→INR fetched live (cached 1h) with safe fallback
 - **Observability**: Structured JSON logs, Prometheus metrics at `/metrics`
 
 ## Quick Start
@@ -41,31 +52,89 @@ Open http://localhost:8000/docs for interactive API documentation.
    ```
 6. CORS is already `allow_origins=["*"]`, so browsers on other devices can call the API.
 
-### UI contract
-
-**File upload:**
+### UI contract (file uploads only — no base64)
 
 ```javascript
 const form = new FormData();
-form.append("image", file);
-await fetch(`${API_BASE}/v1/assets/analyze`, { method: "POST", body: form });
+for (const file of files) form.append("images", file); // 1-10 files
+
+// pick one endpoint:
+const res = await fetch(`${API_BASE}/v1/assets/analyze/multi`, { method: "POST", body: form });
+// or: `${API_BASE}/v1/assets/analyze/collage`
+const data = await res.json();
 ```
 
-**Base64** (send one of `image` or `image_base64`, not both):
+Output is **clean, grouped JSON** (enforced via Gemini structured output / `response_schema`):
 
-```javascript
-const form = new FormData();
-form.append("image_base64", dataUrlOrRawBase64);
-await fetch(`${API_BASE}/v1/assets/analyze`, { method: "POST", body: form });
+```jsonc
+{
+  "request_id": "…",
+  "status": "success",
+  "processing_time_ms": 4200,
+  "analysis_method": "multi_image",
+  "images_analyzed": 3,
+  "review_required": false,
+  "asset": {
+    "name": "Dell Latitude 5420 laptop",
+    "category": "Laptop",
+    "type": "Business ultrabook",
+    "brand": "Dell", "model": "Latitude 5420",
+    "color": "Black", "material": "Aluminium and plastic",
+    "estimated_dimensions": "~32 x 21 x 2 cm",
+    "estimated_age": "~2021, 3-4 years",
+    "quantity": 1, "serial_number": null,
+    "asset_tag_number": "1234567890123456",
+    "specifications": ["Intel Core i7", "16GB RAM"],
+    "accessories": ["power adapter"],
+    "distinguishing_features": ["Dell logo on lid"],
+    "description": "…"
+  },
+  "condition": {
+    "grade": "Fair", "overall_score": 62, "summary": "…",
+    "cosmetic_condition": "…", "structural_condition": "…",
+    "functional_status": "Appears functional",
+    "cleanliness": "Lightly soiled", "wear_level": "Moderate",
+    "usability": "Usable, minor repair advised",
+    "repair_recommendation": "Buff lid, clean chassis.",
+    "estimated_remaining_life": "2-4 years with normal use",
+    "missing_parts": [], "functional_issues": ["bent hinge restricts opening"],
+    "positive_aspects": ["screen intact", "all keys present"],
+    "has_damage": true, "damage_count": 2,
+    "damage_by_severity": { "minor": 1, "moderate": 1, "severe": 0 },
+    "damage_items": [
+      { "location": "Top lid rear-left", "type": "dent", "severity": "moderate",
+        "seen_in_image": 2, "detail": "~1cm dent on rear-left corner.",
+        "affects_function": false, "repair_action": "Reshape or replace lid panel." }
+    ]
+  },
+  "identifiers": {
+    "asset_tag_number": "1234567890123456",
+    "asset_tag_number_raw": "1234567890123456",
+    "tag_readable": true,
+    "tag_position": "Base panel, Image 3",
+    "tag_detection_reasoning": "…",
+    "visible_labels": ["Dell", "Latitude 5420"]
+  },
+  "valuation": {
+    "as_is":            { "usd": { "min": 120, "max": 180 }, "inr": { "min": 12000, "max": 18000 } },
+    "like_new_reference": { "usd": { "min": 260, "max": 320 }, "inr": { "min": 26000, "max": 32000 } },
+    "currency_note": "INR converted at 1 USD = 100 INR.",
+    "confidence": 0.45, "assumptions": "…", "disclaimer": "…"
+  },
+  "confidence": { "overall": 0.81, "asset_name": 0.9, "asset_condition": 0.8, "asset_description": 0.85, "asset_tag_number": 0.7, "valuation": 0.45 },
+  "token_usage": { "input_tokens": 8000, "output_tokens": 2000, "total_tokens": 10000,
+                   "image_tokens": 6720, "text_tokens": 1280,
+                   "images_sent_to_gemini": 3, "per_image_token_budget": 1120, "estimated_image_tokens": 3360 },
+  "cost": { "model": "gemini-3.1-flash-lite", "total_cost_usd": 0.005, "total_cost_inr": 0.5,
+            "usd_to_inr": 100.0, "fx_source": "fixed_rate", "fx_is_fallback": false }
+}
 ```
-
-Data URLs are supported, e.g. `data:image/jpeg;base64,/9j/4AAQ...`. **`image_base64` has no length cap for now** (file upload still respects `MAX_IMAGE_SIZE_MB`).
 
 ### "Refused to connect" from phone
 
 | Check | Fix |
 |--------|-----|
-| Server only on `127.0.0.1` | Stop uvicorn (Ctrl+C). Double-click **`START-API.bat`** or run `python serve.py` |
+| Server only on `127.0.0.1` | Stop uvicorn (Ctrl+C). Run `python serve.py` |
 | Wrong URL on phone | Use `http://192.168.x.x:8000` from `GET /` on the PC — not `localhost` |
 | Windows Firewall | Run **`scripts\open-firewall.ps1`** as Administrator |
 | Wi‑Fi is "Public" | Settings → Network → Wi‑Fi → your network → **Private** |
@@ -83,29 +152,37 @@ Must show **`0.0.0.0:8000`** LISTENING. If you only see **`127.0.0.1:8000`**, LA
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/assets/analyze` | Upload one image → preprocess → single Gemini extraction |
-| `POST /v1/assets/analyze/async` | Same as analyze, returns job id for polling |
+| `POST /v1/assets/analyze/collage` | 1–10 images → merge to one collage → Gemini → analysis + cost |
+| `POST /v1/assets/analyze/multi` | 1–10 images → separate parts → Gemini → analysis + cost |
 | `GET /v1/health` | Health check |
+| `GET /metrics` | Prometheus metrics |
 
 ### Swagger upload
 
 1. Open **/docs**
-2. Expand **Analysis** → `POST /v1/assets/analyze`
+2. Expand **Analysis** → `POST /v1/assets/analyze/multi` (or `/collage`)
 3. Click **Try it out**
-4. Choose one file for **image**
-5. Execute — JSON includes asset fields and image dimensions (no image file in response)
+4. For **images**, click **Add item** once per photo (1–10)
+5. Execute — JSON includes asset, `damage_items`, `valuation`, `token_usage`, `cost`
 
 ## API Usage (curl)
 
 ```bash
-# File upload
-curl -X POST "http://localhost:8000/v1/assets/analyze" \
-  -F "image=@photo.jpg"
+# Multi-image (separate parts) — best per-angle detail
+curl -X POST "http://localhost:8000/v1/assets/analyze/multi" \
+  -F "images=@front.jpg" \
+  -F "images=@back.jpg" \
+  -F "images=@left.jpg"
 
-# Base64 (raw or data URL)
-curl -X POST "http://localhost:8000/v1/assets/analyze" \
-  -F "image_base64=$(base64 -w0 photo.jpg)"
+# Collage (merged into one image)
+curl -X POST "http://localhost:8000/v1/assets/analyze/collage" \
+  -F "images=@front.jpg" \
+  -F "images=@back.jpg"
 ```
+
+### Cost (gemini-3.1-flash-lite)
+
+Input (text/image/video) **$0.25 / 1M tokens**, output **$1.50 / 1M tokens**. Images bill as input tokens via `media_resolution` (high = 1120 tokens/image). Each response includes a `cost` block in USD **and** INR (live FX). Typical 5–10 image analysis ≈ **$0.005–0.01 (~₹0.4–0.9)**.
 
 ## Deploy to Vercel
 
@@ -113,11 +190,11 @@ curl -X POST "http://localhost:8000/v1/assets/analyze" \
 2. Import project in [Vercel](https://vercel.com) → **Add New Project** → select `multiple-image-validation-backend`.
 3. **Environment variables** (Project → Settings → Environment Variables):
    - `GEMINI_API_KEY` — required
-   - `GEMINI_MODEL` — e.g. `gemini-2.0-flash`
+   - `GEMINI_MODEL` — e.g. `gemini-3.1-flash-lite`
    - Other keys from [`.env.example`](.env.example) as needed
 4. Deploy. API base URL: `https://<your-project>.vercel.app`
 
-**Note:** `/v1/assets/analyze` can take 20–60 seconds. In Vercel → Project → Settings → Functions, set **Max Duration** (e.g. 60s) and **Memory** (max 2048 MB on Hobby). If requests time out, use Docker/Railway/Render instead.
+**Note:** the analysis endpoints can take 20–60 seconds. In Vercel → Project → Settings → Functions, set **Max Duration** (e.g. 60s) and **Memory** (max 2048 MB on Hobby). If requests time out, use Docker/Railway/Render instead.
 
 **Deploy uses** `pyproject.toml` → `[tool.vercel] entrypoint = "app.main:app"`. Do not add `api/index.py` in `vercel.json` `functions` — that causes build errors on current Vercel CLI.
 
@@ -153,13 +230,17 @@ See [.env.example](.env.example) for all settings.
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Gemini model |
+| `MAX_IMAGES` | 10 | Max images per request |
+| `MAX_IMAGE_SIZE_MB` | 15 | Per-file upload limit |
 | `MAX_PREPROCESS_EDGE_PX` | 2048 | Max longest edge before Gemini |
-| `MAX_IMAGE_SIZE_MB` | 7 | Upload size limit |
-| `GEMINI_ANALYZE_TEMPERATURE` | 0.0 | Temperature for analyze call |
+| `MEDIA_RESOLUTION_COLLAGE` / `MEDIA_RESOLUTION_MULTI` | `high` | Detail vs cost (low/medium/high) |
+| `GEMINI_INPUT_USD_PER_1M` / `GEMINI_OUTPUT_USD_PER_1M` | 0.25 / 1.50 | Pricing for cost calc |
+| `FX_ENABLED` / `USD_TO_INR_FALLBACK` | true / 86.0 | Live USD→INR + fallback |
 
 ### Prompts
 
-All Gemini instructions for `/assets/analyze` live in [`app/prompts/analysis.txt`](app/prompts/analysis.txt). It covers asset identification, condition, and barcode OCR.
+All Gemini instructions live in [`app/prompts/analysis.txt`](app/prompts/analysis.txt): all-angles inspection, exhaustive damage enumeration, asset identification, barcode OCR, and valuation.
 
 ## Development
 
