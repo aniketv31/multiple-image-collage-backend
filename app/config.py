@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     max_images: int = 10
     max_image_size_mb: int = 15
     max_preprocess_edge_px: int = 2048
+    max_gemini_payload_mb: int = 18
     gemini_analyze_temperature: float = 0.0
     gemini_max_output_tokens: int = 8192
 
@@ -48,6 +49,11 @@ class Settings(BaseSettings):
     @property
     def max_image_size_bytes(self) -> int:
         return self.max_image_size_mb * 1024 * 1024
+
+    @property
+    def max_gemini_payload_bytes(self) -> int:
+        """Total inline payload budget for a single Gemini API call."""
+        return self.max_gemini_payload_mb * 1024 * 1024
 
     @property
     def max_multipart_part_bytes(self) -> int:

@@ -21,7 +21,7 @@ from app.models.responses import (
     ValuationAmount,
 )
 from app.pipeline.collage_composer import build_collage
-from app.pipeline.image_utils import image_to_bytes
+from app.pipeline.image_utils import fit_images_to_budget, image_to_bytes
 from app.pipeline.preprocess import preprocess_images
 from app.services.cost import compute_cost
 from app.services.field_merger import _clean_list, to_asset_details
@@ -61,9 +61,15 @@ class AssetAnalysisService:
         processed = preprocess_images(files, self.settings)
         images = [p.pil_image for p in processed]
 
+        # Resize all images if their combined payload exceeds the budget
+        budget = self.settings.max_gemini_payload_bytes
+        images = fit_images_to_budget(images, max_total_bytes=budget)
+
         collage_base64: str | None = None
         if method == UnifiedViewMethod.COLLAGE:
             collage = build_collage(images)
+            # Re-check: the collage itself may exceed the budget
+            [collage] = fit_images_to_budget([collage], max_total_bytes=budget)
             gemini_images = [collage]
             media_resolution = self.settings.media_resolution_collage
             collage_b64 = base64.b64encode(image_to_bytes(collage)).decode("ascii")
@@ -78,6 +84,7 @@ class AssetAnalysisService:
             media_resolution=media_resolution,
             locale=locale,
             image_labels=image_labels if method == UnifiedViewMethod.MULTI_IMAGE else None,
+            total_images=len(processed),
         )
 
         llm = merge_sticker_sources(llm, images_analyzed=len(processed))
@@ -157,6 +164,8 @@ class AssetAnalysisService:
 
         score = llm.condition_score
         if isinstance(score, int):
+            if 1 <= score <= 10:
+                score = score * 10
             score = max(0, min(100, score))
         else:
             score = None

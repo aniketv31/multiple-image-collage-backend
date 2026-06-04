@@ -80,6 +80,7 @@ class GeminiService:
         media_resolution: str,
         locale: str = "en",
         image_labels: list[str] | None = None,
+        total_images: int | None = None,
     ) -> tuple[LLMAnalysisResult, TokenUsage]:
         if not self.is_configured():
             raise RuntimeError("Gemini API key is not configured")
@@ -87,11 +88,24 @@ class GeminiService:
             raise ValueError("At least one image is required")
 
         prompt = get_analysis_prompt()
-        if len(images) > 1:
+        num_images = total_images or len(images)
+        if num_images == 1:
             prompt += (
-                f"\n\nThis request has {len(images)} images numbered 1 through {len(images)}. "
-                "Use those indices for barcode_seen_in_image, stickers[].seen_in_image, "
-                "and damage_items[].seen_in_image."
+                "\n\nThis request has 1 image. For ALL seen_in_image fields "
+                "(barcode_seen_in_image, stickers[].seen_in_image, "
+                "damage_items[].seen_in_image), you MUST use 1. "
+                "Never leave seen_in_image as null."
+            )
+        else:
+            prompt += (
+                f"\n\nThis request has {num_images} images/panels numbered "
+                f"1 through {num_images}. You MUST provide a valid "
+                f"seen_in_image integer (1 through {num_images}) for EVERY "
+                "sticker and damage item. Never leave seen_in_image as null. "
+                "If a sticker appears on a labeled panel in a collage, use that "
+                "panel number. If a sticker is inferred from text/specs but you "
+                "cannot determine the exact panel, assign the panel where the "
+                "same surface (front, side, back) is most visible."
             )
         if locale != "en":
             prompt += f"\n\nRespond in locale: {locale}."
