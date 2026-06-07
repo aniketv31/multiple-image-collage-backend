@@ -25,7 +25,33 @@ def _clamp_seen_in_image(value: int | None, max_images: int) -> int | None:
     return None
 
 
-def _to_damage_item(raw: LLMDamageItem, max_images: int) -> DamageItem | None:
+def _infer_damage_image_index(
+    raw: LLMDamageItem,
+    max_images: int,
+    barcode_seen_in_image: int | None = None,
+) -> int | None:
+    """Infer seen_in_image from location/detail text when LLM omits it."""
+    if max_images == 1:
+        return 1
+    # Try to extract "Image N" from detail text
+    if raw.detail:
+        match = re.search(r'\bimage\s*(\d+)\b', raw.detail, re.IGNORECASE)
+        if match:
+            idx = int(match.group(1))
+            if 1 <= idx <= max_images:
+                return idx
+    # Try to infer from location field
+    location = (raw.location or "").lower()
+    if ("side" in location) and barcode_seen_in_image is not None:
+        return barcode_seen_in_image
+    return None
+
+
+def _to_damage_item(
+    raw: LLMDamageItem,
+    max_images: int,
+    barcode_seen_in_image: int | None = None,
+) -> DamageItem | None:
     location = (raw.location or "").strip() or None
     dtype = (raw.type or "").strip() or None
     if not location and not dtype and not raw.detail:
@@ -40,6 +66,8 @@ def _to_damage_item(raw: LLMDamageItem, max_images: int) -> DamageItem | None:
         max_images=max_images,
     )
     seen = _clamp_seen_in_image(raw.seen_in_image, max_images)
+    if seen is None:
+        seen = _infer_damage_image_index(raw, max_images, barcode_seen_in_image)
     if placement and seen is not None:
         placement = placement.model_copy(update={"seen_in_image": seen})
 
@@ -78,11 +106,15 @@ def _synthetic_from_issues(
 
 
 def merge_damage_sources(llm: LLMAnalysisResult, max_images: int) -> list[DamageItem]:
+    barcode_seen: int | None = None
+    if isinstance(llm.barcode_seen_in_image, int) and 1 <= llm.barcode_seen_in_image <= max_images:
+        barcode_seen = llm.barcode_seen_in_image
+
     items: list[DamageItem] = []
     seen: set[tuple[str | None, str | None]] = set()
 
     for raw in llm.damage_items or []:
-        item = _to_damage_item(raw, max_images)
+        item = _to_damage_item(raw, max_images, barcode_seen)
         if item is None:
             continue
         key = (item.location, item.type)

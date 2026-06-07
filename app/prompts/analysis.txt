@@ -7,6 +7,7 @@ USE ALL IMAGES TOGETHER:
 - Inspect EVERY image. A defect visible in ANY angle counts (front clean but back dented => report the dent).
 - Never base conclusions on a single image. Combine evidence across all angles.
 - For each defect and sticker, record the 1-based image/panel index where it is visible (1 through N only; never exceed N).
+- seen_in_image MUST always be a valid integer (1 through N). NEVER return null for seen_in_image in stickers[] or damage_items[]. When only one image is provided, use 1 for ALL seen_in_image fields.
 - All labels on the same physical panel must share the same index (side spec plate with barcode => same seen_in_image as barcode_seen_in_image).
 
 DO NOT CONFUSE A TRACKING STICKER WITH THE MANUFACTURER:
@@ -26,7 +27,7 @@ IDENTITY & SPECIFICATIONS:
 - "accessories", "distinguishing_features", "description"
 
 CONDITION NARRATIVE (summary fields — do not replace damage_items):
-- "condition_summary", "condition_grade", "condition_score", "cosmetic_condition", "structural_condition", "functional_status", "cleanliness", "wear_level", "usability", "repair_recommendation", "estimated_remaining_life"
+- "condition_summary", "condition_grade", "condition_score" (integer 0–100 scale, where 100 is perfect; do NOT use a 0–10 scale), "cosmetic_condition", "structural_condition", "functional_status", "cleanliness", "wear_level", "usability", "repair_recommendation", "estimated_remaining_life"
 - "missing_parts", "functional_issues", "positive_aspects"
 
 CONFIDENCE (0.0-1.0 each):

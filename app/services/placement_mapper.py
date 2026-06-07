@@ -341,12 +341,13 @@ def _harmonize_sticker_image_indices(
             target = side_image
         elif _is_front_panel_sticker(s) and front_image is not None:
             target = front_image
-        if s.seen_in_image is not None and _clamp_image_index(s.seen_in_image, max_images) is None:
-            harmonized.append(s.model_copy(update={"seen_in_image": None}))
-            continue
         clamped = _clamp_image_index(s.seen_in_image, max_images)
-        if target is not None and (clamped is None or clamped != target):
+        if target is not None:
             harmonized.append(s.model_copy(update={"seen_in_image": target}))
+        elif clamped is not None:
+            harmonized.append(s.model_copy(update={"seen_in_image": clamped}))
+        elif max_images == 1:
+            harmonized.append(s.model_copy(update={"seen_in_image": 1}))
         else:
             harmonized.append(s.model_copy(update={"seen_in_image": clamped}))
     return harmonized
@@ -513,13 +514,13 @@ def _backfill_sticker_placements(
     filled: list[LLMStickerItem] = []
     for s in stickers:
         if _has_sticker_placement_fields(s):
-            filled.append(
-                s.model_copy(
-                    update={
-                        "seen_in_image": _clamp_image_index(s.seen_in_image, max_images),
-                    }
-                )
-            )
+            clamped_seen = _clamp_image_index(s.seen_in_image, max_images)
+            if clamped_seen is None:
+                if _is_side_panel_sticker(s) and barcode_seen is not None:
+                    clamped_seen = barcode_seen
+                elif max_images == 1:
+                    clamped_seen = 1
+            filled.append(s.model_copy(update={"seen_in_image": clamped_seen}))
             continue
         fields = _infer_sticker_placement_fields(
             s.label_text or "",
@@ -693,7 +694,8 @@ def build_identifiers(
     barcode_present = bool(llm.barcode_present) or bool(placement) or bool(
         llm.barcode_position
     )
-    if normalized_tag or llm.asset_tag_number:
+    raw_tag = (llm.asset_tag_number or "").strip().upper()
+    if normalized_tag or (llm.asset_tag_number and raw_tag != "UNREADABLE"):
         barcode_present = True
 
     if llm.barcode_position:

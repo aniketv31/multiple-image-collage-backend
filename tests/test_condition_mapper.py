@@ -53,3 +53,55 @@ def test_damage_needs_review():
         condition_summary="Scratch on lid.",
     )
     assert damage_needs_review(llm_ok) is False
+
+
+def test_damage_single_image_gets_seen_in_image_1():
+    """When images_analyzed=1, all damage items should get seen_in_image=1."""
+    llm = LLMAnalysisResult(
+        damage_items=[
+            LLMDamageItem(
+                location="front panel",
+                type="scratch",
+                severity="minor",
+                detail="Light scratch on the front.",
+            ),
+        ],
+    )
+    items = build_damage_items(llm, images_analyzed=1)
+    assert len(items) == 1
+    assert items[0].seen_in_image == 1
+
+
+def test_damage_infers_image_from_detail_text():
+    """Damage detail containing 'Image N' should infer seen_in_image."""
+    llm = LLMAnalysisResult(
+        damage_items=[
+            LLMDamageItem(
+                location="rear panel",
+                type="dent",
+                severity="moderate",
+                detail="A small dent visible in Image 3.",
+            ),
+        ],
+    )
+    items = build_damage_items(llm, images_analyzed=4)
+    assert len(items) == 1
+    assert items[0].seen_in_image == 3
+
+
+def test_damage_side_panel_uses_barcode_image():
+    """Damage on 'side panel' should use barcode_seen_in_image when available."""
+    llm = LLMAnalysisResult(
+        barcode_seen_in_image=2,
+        damage_items=[
+            LLMDamageItem(
+                location="right side panel",
+                type="scratch",
+                severity="minor",
+                detail="Light scratch near label area.",
+            ),
+        ],
+    )
+    items = build_damage_items(llm, images_analyzed=3)
+    assert len(items) == 1
+    assert items[0].seen_in_image == 2

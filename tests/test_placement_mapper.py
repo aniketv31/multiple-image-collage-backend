@@ -260,3 +260,74 @@ def test_stickers_image_index_need_review_on_panel_mismatch():
         ),
     ]
     assert stickers_image_index_need_review(stickers, max_images=4) is True
+
+
+def test_single_image_all_stickers_get_seen_in_image_1():
+    """When images_analyzed=1, ALL stickers must get seen_in_image=1, never null."""
+    llm = LLMAnalysisResult(
+        specifications=["PM 0.3", "PM 2.5", "VOC Filter"],
+        distinguishing_features=["Digital temperature display"],
+        stickers=[
+            LLMStickerItem(
+                label_text="BREATHE PURE",
+                sticker_type="brand",
+                asset_location="front panel",
+                horizontal="right",
+                vertical="top",
+            ),
+        ],
+    )
+    merged = merge_sticker_sources(llm, images_analyzed=1)
+    for s in merged.stickers:
+        assert s.seen_in_image == 1, f"{s.label_text} has seen_in_image={s.seen_in_image}"
+
+
+def test_side_panel_stickers_null_index_when_no_barcode():
+    """Side-panel stickers should still get seen_in_image from harmonization when
+    barcode_seen_in_image is null but max_images=1."""
+    llm = LLMAnalysisResult(
+        stickers=[
+            LLMStickerItem(
+                label_text="PM 0.3",
+                sticker_type="spec",
+                asset_location="side panel",
+                horizontal="right",
+                vertical="top",
+                in_frame_position="top right",
+            ),
+        ],
+    )
+    merged = merge_sticker_sources(llm, images_analyzed=1)
+    pm = next(s for s in merged.stickers if s.label_text == "PM 0.3")
+    assert pm.seen_in_image == 1
+
+
+def test_out_of_range_index_uses_panel_target():
+    """When LLM returns out-of-range index for a side-panel sticker, use the
+    canonical side panel image instead of null."""
+    llm = LLMAnalysisResult(
+        barcode_seen_in_image=2,
+        stickers=[
+            LLMStickerItem(
+                label_text="PM 0.3",
+                sticker_type="spec",
+                asset_location="side panel",
+                horizontal="right",
+                seen_in_image=9,
+            ),
+        ],
+    )
+    merged = merge_sticker_sources(llm, images_analyzed=3)
+    pm = next(s for s in merged.stickers if s.label_text == "PM 0.3")
+    assert pm.seen_in_image == 2
+
+
+def test_barcode_present_false_for_unreadable_tag():
+    """When asset_tag_number is UNREADABLE and no other barcode evidence exists,
+    barcode_present should be False."""
+    llm = LLMAnalysisResult(
+        asset_tag_number="UNREADABLE",
+        barcode_present=False,
+    )
+    ids = build_identifiers(llm, None, images_analyzed=1)
+    assert ids.barcode.present is False
